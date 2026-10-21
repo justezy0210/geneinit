@@ -1,6 +1,24 @@
 # Changelog
 
-## Unreleased
+## 0.0.1 — 2026-10-21
+
+Initial versioned development release.
+
+- Include the opt-in v10 selector, 50-aa single-exon minimum, corroborated RNA
+  and protein ranking, and shared selection rules for original and repaired models.
+- Separate input and policy validation, reuse evidence context, and track code
+  dependencies so reruns start at the affected workflow stage.
+- Exclude private regression data, containers, keys, generated sites, and local
+  outputs from Git; skip only tests requiring unavailable private fixtures.
+- Add an introductory README, execution reference, and explicit validation scope.
+- Report the GeneInIt version with `geneinit-run --version` without launching
+  Snakemake.
+
+The software version does not promote a biological policy to production status.
+Broader species accuracy and a fresh run through every external tool remain
+outside the completed fixed-input validation scope.
+
+### Included development changes
 
 - Fix TE release grouping to use transcript IDs consistently and map components
   back to candidate IDs for output; cover two selected TE isoforms through

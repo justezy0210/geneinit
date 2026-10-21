@@ -1,8 +1,8 @@
 cff-version: 1.2.0
-message: "If you use GeneInIt, cite the archived release described here."
+message: "Citation metadata is provisional; record the GeneInIt version and repository commit."
 title: "GeneInIt"
 type: software
-version: "0.0.0-dev"
-date-released: "2026-08-23"
+version: "0.0.1"
+date-released: "2026-10-21"
 authors:
   - family-names: "To be assigned"

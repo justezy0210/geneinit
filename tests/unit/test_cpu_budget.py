@@ -6,6 +6,7 @@ import sys
 
 import pytest
 
+from geneinit import __version__
 from geneinit.cli import parse_arguments
 
 
@@ -51,3 +52,17 @@ def test_alias_equals_and_help():
     with pytest.raises(SystemExit) as error:
         parse_arguments(["--help"])
     assert error.value.code == 0
+
+
+@pytest.mark.parametrize("budget", [[], ["--threads", "2"]])
+def test_version_reports_geneinit_without_launching_snakemake(tmp_path, budget):
+    executable = tmp_path / "snakemake"
+    executable.write_text(f"#!{sys.executable}\nraise SystemExit(93)\n")
+    executable.chmod(0o755)
+    environment = dict(os.environ, PATH=str(tmp_path))
+    result = subprocess.run(
+        [sys.executable, "-m", "geneinit.cli", *budget, "--version"],
+        env=environment, capture_output=True, text=True, check=True,
+    )
+    assert result.stdout.strip() == f"GeneInIt {__version__}"
+    assert result.stderr == ""

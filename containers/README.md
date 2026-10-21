@@ -71,4 +71,4 @@ The older numeric `--cores` / `-c` options remain accepted. Execution without a
 budget is rejected; `--help` and `--version` remain available without one.
 The launcher forwards the budget to Snakemake and restricts inherited Linux CPU
 affinity. The image includes sequence-parallel AUGUSTUS prediction and its
-official output merger. See the main README for per-stage behavior.
+official output merger. See the [execution reference](../docs/execution.md) for per-stage behavior.

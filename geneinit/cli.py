@@ -8,6 +8,8 @@ from pathlib import Path
 import shutil
 import sys
 
+from geneinit import __version__
+
 
 def positive_threads(value: str) -> int:
     try:
@@ -53,6 +55,9 @@ def limit_cpus(requested: int) -> tuple[int, list[int] | None]:
 
 def main() -> None:
     requested, remaining = parse_arguments(sys.argv[1:])
+    if remaining == ["--version"]:
+        print(f"GeneInIt {__version__}")
+        return
     root = Path(__file__).resolve().parents[1]
     executable = shutil.which("snakemake")
     if executable is None:
