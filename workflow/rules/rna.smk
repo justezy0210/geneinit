@@ -1,7 +1,7 @@
 if RNA_INPUT_MODE == "fastq":
     rule fastp_pe:
         input:
-            preflight=PREFLIGHT_COMPLETE,
+            preflight=INPUT_PREFLIGHT_COMPLETE,
             read1=lambda wildcards: str(_sample_record(wildcards).read1),
             read2=lambda wildcards: str(_sample_record(wildcards).read2),
         output:
@@ -26,7 +26,7 @@ if RNA_INPUT_MODE == "fastq":
             """
     rule fastp_se:
         input:
-            preflight=PREFLIGHT_COMPLETE,
+            preflight=INPUT_PREFLIGHT_COMPLETE,
             read1=lambda wildcards: str(_sample_record(wildcards).read1),
         output:
             read1=f"{READS_DIR}/SE/{{sample}}/{{sample}}.clean.fastq.gz",
@@ -47,7 +47,7 @@ if RNA_INPUT_MODE == "fastq":
             """
     rule hisat2_build:
         input:
-            preflight=PREFLIGHT_COMPLETE,
+            preflight=INPUT_PREFLIGHT_COMPLETE,
             genome=lambda wildcards: config["genome"],
         output:
             HISAT2_INDEX,
@@ -153,9 +153,10 @@ if RNA_INPUT_MODE == "fastq":
 else:
     rule import_rna_bam:
         input:
-            preflight=PREFLIGHT_COMPLETE,
-            manifest=f"{PREFLIGHT_DIR}/input_manifest.tsv",
-            samples=f"{PREFLIGHT_DIR}/normalized_samples.tsv",
+            code=source_inputs(workflow.basedir, "rna_import"),
+            preflight=INPUT_PREFLIGHT_COMPLETE,
+            manifest=f"{INPUT_PREFLIGHT_DIR}/input_manifest.tsv",
+            samples=f"{INPUT_PREFLIGHT_DIR}/normalized_samples.tsv",
             bam=lambda wildcards: str(_sample_record(wildcards).bam),
             csi=lambda wildcards: str(_sample_record(wildcards).csi),
         output:

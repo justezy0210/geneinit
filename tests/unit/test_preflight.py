@@ -5,8 +5,11 @@ from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
-from geneinit.contracts.preflight import PreflightError, run_preflight
+from geneinit.contracts.preflight import (
+    PreflightError, run_input_preflight, run_preflight, input_preflight_config, _sha256,
+)
 
 
 class PreflightTests(unittest.TestCase):
@@ -65,6 +68,111 @@ class PreflightTests(unittest.TestCase):
         manifest = (output / "input_manifest.tsv").read_text(encoding="utf-8")
         self.assertIn("sample_R1.fastq", manifest)
         self.assertIn("sample_R2.fastq", manifest)
+
+    def test_input_receipt_preserves_full_semantics_without_rehashing_sources(self):
+        config = self.config()
+        direct = run_preflight(config, self.root / "direct")
+        inputs = self.root / "inputs"
+        run_input_preflight(config, inputs)
+        with patch("geneinit.contracts.preflight._sha256", wraps=_sha256) as hashed:
+            cached = run_preflight(config, self.root / "cached",
+                                   input_validation=inputs / "input_validation.json")
+        self.assertEqual(direct, cached)
+        self.assertEqual([call.args[0] for call in hashed.call_args_list], [self.policy])
+        self.assertEqual(
+            json.loads((self.root / "direct/normalized_config.json").read_text()),
+            json.loads((self.root / "cached/normalized_config.json").read_text()),
+        )
+
+    def test_input_receipt_binds_relative_paths_to_the_original_directory(self):
+        config = self.config()
+        for key in ("genome", "repeat_gff", "protein_fasta", "samples"):
+            config[key] = Path(config[key]).name
+        inputs = self.root / "inputs"
+        with patch("os.getcwd", return_value=str(self.root)):
+            run_input_preflight(config, inputs)
+        with patch("os.getcwd", return_value=str(self.root / "elsewhere")):
+            with self.assertRaisesRegex(PreflightError, "configuration differs"):
+                run_preflight(config, self.root / "moved_cwd",
+                              input_validation=inputs / "input_validation.json")
+
+    def test_downstream_settings_do_not_change_input_scope(self):
+        original = self.config()
+        changed = {**original, "policy": "elsewhere.json", "gene_prefix": "OTHER",
+                   "expected_protein_copies": 7, "te_evidence": "te.json",
+                   "evidence": {"junction_min_mapq": 60},
+                   "prediction": {"augustus_rounds": 8}, "deployment": {"mode": "other"}}
+        self.assertEqual(input_preflight_config(original), input_preflight_config(changed))
+        changed["genome"] = "different.fa"
+        self.assertNotEqual(input_preflight_config(original), input_preflight_config(changed))
+
+    def test_reused_input_receipt_still_validates_downstream_fields(self):
+        config = self.config()
+        inputs = self.root / "inputs"
+        run_input_preflight(config, inputs)
+        for update, message in (({"expected_protein_copies": 0}, "positive integer"),
+                                ({"gene_prefix": "!"}, "public ID"),
+                                ({"policy": "absent.json"}, "readable file")):
+            with self.subTest(update=update), self.assertRaisesRegex(PreflightError, message):
+                run_preflight({**config, **update}, self.root / "bad_run",
+                              input_validation=inputs / "input_validation.json")
+
+    def test_reused_input_receipt_rejects_changed_source_or_corruption(self):
+        config = self.config()
+        inputs = self.root / "inputs"
+        run_input_preflight(config, inputs)
+        path = inputs / "input_validation.json"
+        original = path.read_text()
+        data = json.loads(original)
+        data["payload"]["semantic_samples"][0]["replicate"] = "different"
+        path.write_text(json.dumps(data))
+        with self.assertRaisesRegex(PreflightError, "invalid input-preflight receipt"):
+            run_preflight(config, self.root / "bad_receipt", input_validation=path)
+        path.write_text(original)
+        self.read1.write_text("@different\nACGT\n+\nFFFF\n")
+        with self.assertRaisesRegex(PreflightError, "source changed"):
+            run_preflight(config, self.root / "changed_input", input_validation=path)
+
+    def test_receipt_rejects_retargeted_read_symlink(self):
+        alias = self.root / "read_alias.fastq"
+        alias.symlink_to(self.read1)
+        self.samples.write_text(self.samples.read_text().replace(str(self.read1), str(alias)))
+        inputs = self.root / "inputs"
+        run_input_preflight(self.config(), inputs)
+        different = self.root / "different.fastq"
+        different.write_text("@different\nAAAA\n+\nFFFF\n")
+        alias.unlink()
+        alias.symlink_to(different)
+        with self.assertRaisesRegex(PreflightError, "sample input paths changed.*rerun input_preflight"):
+            run_preflight(self.config(), self.root / "cached",
+                          input_validation=inputs / "input_validation.json")
+        self.assertFalse((self.root / "cached/preflight.complete.tsv").exists())
+
+    def test_receipt_rejects_relative_sample_paths_from_different_directory(self):
+        self.samples.write_text(self.samples.read_text().replace(str(self.root) + "/", ""))
+        other = self.root / "other"
+        other.mkdir()
+        (other / self.read1.name).write_bytes(self.read1.read_bytes())
+        (other / self.read2.name).write_bytes(self.read2.read_bytes())
+        inputs = self.root / "inputs"
+        with patch("os.getcwd", return_value=str(self.root)):
+            run_input_preflight(self.config(), inputs)
+        with patch("os.getcwd", return_value=str(other)):
+            with self.assertRaisesRegex(PreflightError, "sample input paths changed.*rerun input_preflight"):
+                run_preflight(self.config(), self.root / "cached",
+                              input_validation=inputs / "input_validation.json")
+
+    def test_receipt_revalidates_duplicate_read_paths(self):
+        alias = self.root / "read_alias.fastq"
+        alias.symlink_to(self.read1)
+        self.samples.write_text(self.samples.read_text().replace(str(self.read1), str(alias)))
+        inputs = self.root / "inputs"
+        run_input_preflight(self.config(), inputs)
+        alias.unlink()
+        alias.symlink_to(self.read2)
+        with self.assertRaisesRegex(PreflightError, "read1 and read2 are identical.*rerun input_preflight"):
+            run_preflight(self.config(), self.root / "cached",
+                          input_validation=inputs / "input_validation.json")
 
     def test_runtime_fields_do_not_change_semantic_hash(self):
         first = run_preflight(self.config(), self.root / "first")

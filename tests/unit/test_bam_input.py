@@ -9,7 +9,7 @@ import pysam
 from geneinit.contracts.alignments import (
     AlignmentContractError, check_staging_paths, stage_alignment, validate_alignment,
 )
-from geneinit.contracts.preflight import PreflightError, run_preflight
+from geneinit.contracts.preflight import PreflightError, run_input_preflight, run_preflight
 from geneinit.contracts.samples import BAM_SAMPLE_COLUMNS, SampleContractError, load_samples
 
 
@@ -83,6 +83,39 @@ class BamInputTests(unittest.TestCase):
         return stage_alignment(self.record(), self.root / "preflight/input_manifest.tsv",
                                self.root / "staged/S1.bam", self.root / "staged/S1.bam.csi",
                                self.root / "staged/import.json")
+
+    def test_input_receipt_preserves_bam_preflight_outputs(self):
+        direct = run_preflight(self.config(), self.root / "direct")
+        inputs = self.root / "inputs"
+        run_input_preflight(self.config(), inputs)
+        cached = run_preflight(self.config(), self.root / "cached",
+                               input_validation=inputs / "input_validation.json")
+        self.assertEqual(direct, cached)
+        for name in ("normalized_config.json", "normalized_samples.tsv", "input_manifest.tsv"):
+            self.assertEqual((self.root / "direct" / name).read_bytes(),
+                             (self.root / "cached" / name).read_bytes())
+
+    def test_input_receipt_rejects_retargeted_bam_or_csi(self):
+        original_bam, original_csi = self.bam, self.csi
+        bam_alias, csi_alias = self.root / "alias.bam", self.root / "alias.bam.csi"
+        bam_alias.symlink_to(original_bam)
+        csi_alias.symlink_to(original_csi)
+        self.bam, self.csi = bam_alias, csi_alias
+        self.write_samples()
+        inputs = self.root / "inputs"
+        run_input_preflight(self.config(), inputs)
+        self.bam, self.csi = self.root / "different.bam", self.root / "different.bam.csi"
+        self.write_bam(query="different")
+        for alias, old, new in ((bam_alias, original_bam, self.bam),
+                                (csi_alias, original_csi, self.csi)):
+            with self.subTest(role=alias.name):
+                alias.unlink()
+                alias.symlink_to(new)
+                with self.assertRaisesRegex(PreflightError, "sample input paths changed.*rerun input_preflight"):
+                    run_preflight(self.config(), self.root / "cached",
+                                  input_validation=inputs / "input_validation.json")
+                alias.unlink()
+                alias.symlink_to(old)
 
     def test_mask_only_change_accepts_bam_without_fastqs(self):
         result = self.preflight()

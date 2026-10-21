@@ -13,6 +13,7 @@ UTR_NORMALIZED_MAPPINGS = [
 
 rule prepare_postqc_utr_shards:
     input:
+        code=source_inputs(workflow.basedir, "utr_prepare"),
         gff3=POSTQC_GFF3,
         transcript_decisions=f"{POSTQC_DIR}/{ASSEMBLY_ID}.transcript_decisions.tsv",
         postqc_complete=POSTQC_COMPLETE,
@@ -65,6 +66,7 @@ rule rank_utr_isoforms:
 
 rule refine_utr_shard:
     input:
+        code=source_inputs(workflow.basedir, "utr_refine"),
         rna=f"{UTR_PREP_DIR}/rna/{{shard}}.rna.gtf",
         coding=f"{UTR_PREP_DIR}/coding/{{shard}}.coding.gtf",
         alternatives=f"{UTR_DIR}/01_ranked/{{shard}}/alternatives.gff",
@@ -89,6 +91,7 @@ rule refine_utr_shard:
 
 rule aggregate_utr_shards:
     input:
+        code=source_inputs(workflow.basedir, "utr_aggregate"),
         gff3s=UTR_NORMALIZED_GFF3,
         mappings=UTR_NORMALIZED_MAPPINGS,
         preparation=UTR_PREPARATION_MAPPING,

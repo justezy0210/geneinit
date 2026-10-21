@@ -180,56 +180,42 @@ def _write_json(path: Path, value: Any) -> None:
     temporary.replace(path)
 
 
-def run_preflight(config: Mapping[str, Any], output_dir: Path) -> dict[str, Any]:
-    """Validate inputs and write the stage-00 content lock.
+INPUT_CONFIG_FIELDS = (
+    "assembly_id", "assembly_scope", "genetic_code", "genome", "repeat_gff",
+    "protein_fasta", "samples", "rna",
+)
 
-    Runtime fields are recorded but excluded from the biological semantic hash.
-    """
 
-    output_dir = output_dir.resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
+def input_preflight_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Only settings consumed while validating source data, before selection."""
+    scoped = {key: config[key] for key in INPUT_CONFIG_FIELDS if key in config}
+    for key in ("genome", "repeat_gff", "protein_fasta", "samples"):
+        if isinstance(scoped.get(key), str):
+            scoped[key] = str(Path(scoped[key]).expanduser().resolve())
+    if isinstance(scoped.get("rna"), dict):
+        scoped["rna"] = dict(scoped["rna"])
+        reference = scoped["rna"].get("reference_fasta")
+        if isinstance(reference, str):
+            scoped["rna"]["reference_fasta"] = str(Path(reference).expanduser().resolve())
+    return scoped
 
-    required_scalars = (
-        "assembly_id",
-        "organism",
-        "assembly_scope",
-        "reference_representation",
-        "expected_protein_copies",
-        "genetic_code",
-        "gene_prefix",
-    )
-    missing = [key for key in required_scalars if key not in config]
-    if missing:
-        raise PreflightError(f"missing config fields: {', '.join(missing)}")
-    if not SAFE_ID.fullmatch(str(config["assembly_id"])):
+
+def _file_state(path: Path) -> list[int]:
+    stat = path.stat()
+    return [stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_dev, stat.st_ino]
+
+
+def _validate_input_data(config: Mapping[str, Any]) -> dict[str, Any]:
+    if not SAFE_ID.fullmatch(str(config.get("assembly_id", ""))):
         raise PreflightError("assembly_id must match [A-Za-z0-9_.-]+")
-    if not str(config["organism"]).strip():
-        raise PreflightError("organism must be non-empty")
-    if config["assembly_scope"] != "nuclear":
+    if config.get("assembly_scope") != "nuclear":
         raise PreflightError("GeneInIt v1 accepts assembly_scope: nuclear only")
-    if config["reference_representation"] not in REPRESENTATIONS:
-        raise PreflightError("invalid reference_representation")
-    if not isinstance(config["expected_protein_copies"], int) or config[
-        "expected_protein_copies"
-    ] < 1:
-        raise PreflightError("expected_protein_copies must be a positive integer")
-    if config["genetic_code"] != 1:
-        raise PreflightError(
-            "GeneInIt currently supports nuclear genetic_code: 1 only"
-        )
-    if not SAFE_PREFIX.fullmatch(str(config["gene_prefix"])):
-        raise PreflightError("gene_prefix violates the public ID contract")
-
+    if config.get("genetic_code") != 1:
+        raise PreflightError("GeneInIt currently supports nuclear genetic_code: 1 only")
     genome = _require_file(config.get("genome"), "genome")
     repeat_gff = _require_file(config.get("repeat_gff"), "repeat_gff")
     protein_fasta = _require_file(config.get("protein_fasta"), "protein_fasta")
     samples_path = _require_file(config.get("samples"), "samples")
-    policy = _require_file(config.get("policy"), "policy")
-    te_evidence = _require_file(config["te_evidence"], "te_evidence") if config.get("te_evidence") else None
-    if te_evidence is not None:
-        from geneinit.evidence.te_classification import TeClassifier
-        TeClassifier(te_evidence, str(config["assembly_id"]))
-
     try:
         input_mode, alignment_reference = rna_input_config(config)
     except AlignmentContractError as error:
@@ -274,17 +260,7 @@ def run_preflight(config: Mapping[str, Any], output_dir: Path) -> dict[str, Any]
         "repeat_gff": lock("repeat_gff", repeat_gff),
         "protein_fasta": lock("protein_fasta", protein_fasta),
         "samples": lock("samples", samples_path),
-        "policy": lock("policy", policy),
     }
-    if te_evidence is not None:
-        locked["te_evidence"] = lock("te_evidence", te_evidence)
-    deployment = None
-    if "deployment" in config:
-        try:
-            deployment = load_predictor_deployment(config)
-        except DeploymentError as error:
-            raise PreflightError(str(error)) from error
-        locked["predictor_sif"] = lock("predictor_sif", deployment.sif)
     if alignment_reference is not None:
         locked["rna_reference_fasta"] = lock("rna_reference_fasta", alignment_reference)
     alignment_checks = []
@@ -327,6 +303,162 @@ def run_preflight(config: Mapping[str, Any], output_dir: Path) -> dict[str, Any]
                 "read2_sha256": read2["sha256"] if read2 else None,
             })
         semantic_samples.append(semantic_sample)
+
+    return {
+        "input_config": input_preflight_config(config),
+        "locked": locked, "manifest_rows": manifest_rows,
+        "file_states": {row["path"]: _file_state(Path(row["path"])) for row in manifest_rows},
+        "genome_stats": genome_stats, "repeat_stats": repeat_stats,
+        "protein_stats": protein_stats, "input_mode": input_mode,
+        "alignment_checks": alignment_checks, "semantic_samples": semantic_samples,
+    }
+
+
+def _write_samples(path: Path, samples, input_mode: str) -> None:
+    _write_tsv(
+        path, BAM_SAMPLE_COLUMNS if input_mode == "bam" else SAMPLE_COLUMNS,
+        ((row.sample, row.condition, row.replicate, row.layout, row.strandedness,
+          str(row.bam) if input_mode == "bam" else str(row.read1),
+          str(row.csi) if input_mode == "bam" else (str(row.read2) if row.read2 else ""))
+         for row in samples),
+    )
+
+
+def _write_manifest(path: Path, rows: list[dict[str, Any]]) -> None:
+    _write_tsv(path, ("role", "sample", "size_bytes", "sha256", "path"),
+               ((row["role"], row["sample"], row["size_bytes"], row["sha256"], row["path"])
+                for row in rows))
+
+
+def run_input_preflight(config: Mapping[str, Any], output_dir: Path) -> dict[str, Any]:
+    """Validate and hash source data once, independently of downstream policy."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    data = _validate_input_data(input_preflight_config(config))
+    digest = _canonical_sha256(data)
+    _write_json(output_dir / "input_validation.json", {
+        "schema_version": 1, "status": "PASS", "payload_sha256": digest, "payload": data,
+    })
+    samples = load_samples(Path(data["locked"]["samples"]["path"]), input_mode=data["input_mode"])
+    _write_samples(output_dir / "normalized_samples.tsv", samples, data["input_mode"])
+    _write_manifest(output_dir / "input_manifest.tsv", data["manifest_rows"])
+    _write_tsv(output_dir / "preflight.complete.tsv", ("schema_version", "status", "input_sha256"),
+               ((1, "PASS", digest),))
+    return {"status": "PASS", "input_sha256": digest, "sample_count": len(samples)}
+
+
+def _load_input_validation(config: Mapping[str, Any], path: Path) -> dict[str, Any]:
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+    data = receipt.get("payload")
+    if (receipt.get("schema_version") != 1 or receipt.get("status") != "PASS"
+            or not isinstance(data, dict)
+            or receipt.get("payload_sha256") != _canonical_sha256(data)):
+        raise PreflightError("invalid input-preflight receipt")
+    if data.get("input_config") != input_preflight_config(config):
+        raise PreflightError("input-preflight configuration differs; rerun input_preflight")
+    for row in data["manifest_rows"]:
+        source = Path(row["path"])
+        if not source.is_file() or _file_state(source) != data["file_states"].get(row["path"]):
+            raise PreflightError(f"source changed since input preflight: {source}")
+    try:
+        samples = load_samples(Path(data["locked"]["samples"]["path"]), input_mode=data["input_mode"])
+    except SampleContractError as error:
+        raise PreflightError(
+            f"sample inputs changed since input preflight: {error}; rerun input_preflight"
+        ) from error
+    roles = ("bam", "csi") if data["input_mode"] == "bam" else ("read1", "read2")
+    expected_paths = sorted(
+        (row["role"], row["sample"], row["path"])
+        for row in data["manifest_rows"] if row["role"] in roles
+    )
+    current_paths = sorted(
+        (role, sample.sample, str(getattr(sample, role)))
+        for sample in samples for role in roles if getattr(sample, role) is not None
+    )
+    if current_paths != expected_paths:
+        raise PreflightError(
+            "sample input paths changed since input preflight; rerun input_preflight"
+        )
+    return data
+
+
+def run_preflight(config: Mapping[str, Any], output_dir: Path, *,
+                  input_validation: Path | None = None) -> dict[str, Any]:
+    """Validate inputs and write the stage-00 content lock.
+
+    Runtime fields are recorded but excluded from the biological semantic hash.
+    A verified input-preflight receipt avoids rehashing unchanged source data.
+    """
+
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    required_scalars = (
+        "assembly_id",
+        "organism",
+        "assembly_scope",
+        "reference_representation",
+        "expected_protein_copies",
+        "genetic_code",
+        "gene_prefix",
+    )
+    missing = [key for key in required_scalars if key not in config]
+    if missing:
+        raise PreflightError(f"missing config fields: {', '.join(missing)}")
+    if not SAFE_ID.fullmatch(str(config["assembly_id"])):
+        raise PreflightError("assembly_id must match [A-Za-z0-9_.-]+")
+    if not str(config["organism"]).strip():
+        raise PreflightError("organism must be non-empty")
+    if config["assembly_scope"] != "nuclear":
+        raise PreflightError("GeneInIt v1 accepts assembly_scope: nuclear only")
+    if config["reference_representation"] not in REPRESENTATIONS:
+        raise PreflightError("invalid reference_representation")
+    if not isinstance(config["expected_protein_copies"], int) or config[
+        "expected_protein_copies"
+    ] < 1:
+        raise PreflightError("expected_protein_copies must be a positive integer")
+    if config["genetic_code"] != 1:
+        raise PreflightError(
+            "GeneInIt currently supports nuclear genetic_code: 1 only"
+        )
+    if not SAFE_PREFIX.fullmatch(str(config["gene_prefix"])):
+        raise PreflightError("gene_prefix violates the public ID contract")
+
+    data = (_load_input_validation(config, input_validation) if input_validation is not None
+            else _validate_input_data(config))
+    locked = dict(data["locked"])
+    manifest_rows = list(data["manifest_rows"])
+    genome, repeat_gff, protein_fasta, samples_path = (
+        Path(locked[key]["path"]) for key in ("genome", "repeat_gff", "protein_fasta", "samples")
+    )
+    genome_stats, repeat_stats, protein_stats = (
+        data[key] for key in ("genome_stats", "repeat_stats", "protein_stats")
+    )
+    input_mode = data["input_mode"]
+    alignment_reference = (Path(locked["rna_reference_fasta"]["path"])
+                           if "rna_reference_fasta" in locked else None)
+    alignment_checks, semantic_samples = data["alignment_checks"], data["semantic_samples"]
+    samples = load_samples(samples_path, input_mode=input_mode)
+
+    def lock(role: str, path: Path, sample: str = "") -> dict[str, Any]:
+        row = {"role": role, "sample": sample, "path": str(path),
+               "size_bytes": path.stat().st_size, "sha256": _sha256(path)}
+        manifest_rows.append(row)
+        return row
+
+    policy = _require_file(config.get("policy"), "policy")
+    locked["policy"] = lock("policy", policy)
+    te_evidence = _require_file(config["te_evidence"], "te_evidence") if config.get("te_evidence") else None
+    if te_evidence is not None:
+        from geneinit.evidence.te_classification import TeClassifier
+        TeClassifier(te_evidence, str(config["assembly_id"]))
+        locked["te_evidence"] = lock("te_evidence", te_evidence)
+    deployment = None
+    if "deployment" in config:
+        try:
+            deployment = load_predictor_deployment(config)
+        except DeploymentError as error:
+            raise PreflightError(str(error)) from error
+        locked["predictor_sif"] = lock("predictor_sif", deployment.sif)
 
     biological_config = {
         key: config[key]
@@ -435,36 +567,8 @@ def run_preflight(config: Mapping[str, Any], output_dir: Path) -> dict[str, Any]
 
     _write_json(output_dir / "normalized_config.json", normalized_config)
     _write_json(output_dir / "preflight.json", summary)
-    _write_tsv(
-        output_dir / "normalized_samples.tsv",
-        BAM_SAMPLE_COLUMNS if input_mode == "bam" else SAMPLE_COLUMNS,
-        (
-            (
-                row.sample,
-                row.condition,
-                row.replicate,
-                row.layout,
-                row.strandedness,
-                str(row.bam) if input_mode == "bam" else str(row.read1),
-                str(row.csi) if input_mode == "bam" else (str(row.read2) if row.read2 else ""),
-            )
-            for row in samples
-        ),
-    )
-    _write_tsv(
-        output_dir / "input_manifest.tsv",
-        ("role", "sample", "size_bytes", "sha256", "path"),
-        (
-            (
-                row["role"],
-                row["sample"],
-                row["size_bytes"],
-                row["sha256"],
-                row["path"],
-            )
-            for row in manifest_rows
-        ),
-    )
+    _write_samples(output_dir / "normalized_samples.tsv", samples, input_mode)
+    _write_manifest(output_dir / "input_manifest.tsv", manifest_rows)
     _write_tsv(
         output_dir / "preflight.complete.tsv",
         ("schema_version", "status", "semantic_config_sha256"),

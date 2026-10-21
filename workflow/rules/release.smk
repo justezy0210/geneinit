@@ -1,5 +1,7 @@
 rule build_structural_release:
     input:
+        code=source_inputs(workflow.basedir, "release"),
+        preflight=PREFLIGHT_COMPLETE,
         gff3=UTR_GFF3,
         te_evidence=lambda wildcards: [config["te_evidence"]] if config.get("te_evidence") else [],
         candidates=f"{CANDIDATE_DIR}/{ASSEMBLY_ID}.candidate_universe.tsv",

@@ -1,5 +1,15 @@
 # GeneInIt
 
+The current Jinju-data recommendation uses
+`policies/unified_v10_single_exon50_corroborated_multisample.json` with one
+selector for original and repaired candidates. The maintained workflow separates
+input validation from downstream policy validation, shares evidence scoring, and
+tracks imported code so reruns start at the affected stage. See
+[incremental execution and validation](docs/development/incremental_execution.md).
+The original production-v2 default remains available; select the v10 policy
+explicitly. Its frozen experimental marker is retained, with completed validation
+recorded outside the policy file.
+
 GeneInIt is a reproducible Snakemake workflow for evidence-integrated eukaryotic
 structural gene annotation. The intended production input is one nuclear,
 soft-masked assembly, its coordinate-matched repeat GFF3, RNA-seq evidence

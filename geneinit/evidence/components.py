@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import csv
 import gzip
 import json
@@ -15,6 +15,7 @@ from typing import Iterable, Iterator, Mapping, Sequence
 from geneinit.contracts.streaming import DiskBackedUniqueIds
 from geneinit.evidence.junctions import AGGREGATE_COLUMNS
 from geneinit.evidence.repeats import REPEAT_SCOPE, is_classified_te, repeat_classification
+from geneinit.evidence.rna_cds import RNA_CDS_COLUMNS, RNA_CDS_SAMPLE_COLUMNS, rna_cds_metrics
 from geneinit.evidence.metrics import (
     Interval,
     IntervalIndex,
@@ -61,7 +62,7 @@ EVIDENCE_COLUMNS = (
     "all_repeat_class_bp_json",
     "repeat_overlap_bp", "repeat_cds_fraction", "repeat_top_class",
     "repeat_class_bp_json", "introns_json", "cds_signature",
-)
+) + RNA_CDS_COLUMNS + RNA_CDS_SAMPLE_COLUMNS
 
 
 class EvidenceError(RuntimeError):
@@ -111,6 +112,7 @@ class RnaTranscript:
     seqid: str
     strand: str
     exons: tuple[Interval, ...]
+    sample_sources: tuple[str, ...] = ()
 
     @property
     def start(self) -> int:
@@ -631,13 +633,40 @@ def protein_tier(metrics: Mapping[str, object], intron_count: int) -> int:
     return 1
 
 
+def load_rna_cds_transcripts(merged, sample_gtfs=()):
+    """Add distinct sample exon chains for structural checks only.
+
+    Keep one deterministic transcript witness per exact exon chain; repeated
+    assemblies are not independent read support. Replication comes from the
+    junction aggregate. Witness IDs retain the source path for audit. Preserve
+    every canonical sample-GTF source separately, including chains also present
+    in merged RNA; this counts files, not independent biological replicates.
+    """
+    distinct = {(tx.seqid, tx.strand, tx.exons): tx for tx in merged}
+    sources = {key: set() for key in distinct}
+    for path in sorted({Path(p).resolve() for p in sample_gtfs}):
+        for tx in load_stringtie_transcripts(path):
+            key = tx.seqid, tx.strand, tx.exons
+            if key not in distinct:
+                distinct[key] = RnaTranscript(
+                    f"{path}::{tx.transcript_id}", tx.seqid, tx.strand, tx.exons)
+                sources[key] = set()
+            sources[key].add(str(path))
+    return [
+        replace(tx, sample_sources=tuple(sorted(sources[key])))
+        for key, tx in distinct.items()
+    ]
+
+
 def best_rna_metrics(
     candidate: CandidateRecord,
     index: IntervalIndex[RnaTranscript],
     junctions: Mapping[tuple[str, int, int, str], JunctionAggregate],
+    *, boundary_index=None,
 ) -> dict[str, object]:
     best: tuple[tuple[object, ...], str, dict[str, object]] | None = None
-    for transcript in index.query(candidate.seqid, candidate.start, candidate.end, candidate.strand):
+    transcripts = list(index.query(candidate.seqid, candidate.start, candidate.end, candidate.strand))
+    for transcript in transcripts:
         relevant_exons = clip_intervals(transcript.exons, candidate.start, candidate.end)
         overlap, precision, recall, f1 = interval_metrics(candidate.intervals, relevant_exons)
         relevant_introns = tuple(
@@ -691,6 +720,10 @@ def best_rna_metrics(
         tier = int(structure["rna_best_transcript_id"] != "NA")
     return {
         **structure,
+        **rna_cds_metrics(
+            candidate, transcripts if boundary_index is None else boundary_index.query(
+                candidate.seqid, candidate.start, candidate.end, candidate.strand),
+            junctions),
         "rna_hq_read_counts": json.dumps(hq, separators=(",", ":")),
         "rna_sample_hq_ge1_counts": json.dumps(samples, separators=(",", ":")),
         "rna_condition_ge2rep_hq_ge1_counts": json.dumps(rep1, separators=(",", ":")),
@@ -871,6 +904,7 @@ def _score_candidate(
     retained_targets: Mapping[str, frozenset[str]],
     seed_targets: Mapping[str, frozenset[str]],
     expected_protein_copies: int,
+    *, boundary_index=None,
 ) -> dict[str, object]:
     protein = best_protein_metrics(candidate, chain_index)
     row: dict[str, object] = {
@@ -889,7 +923,8 @@ def _score_candidate(
         "common_qc_pass": int(candidate.orf_status == "complete"),
     }
     row.update(splice_metrics(candidate, genome))
-    row.update(best_rna_metrics(candidate, transcript_index, junctions))
+    row.update(best_rna_metrics(candidate, transcript_index, junctions,
+                               boundary_index=boundary_index))
     row.update(protein)
     row["protein_tier"] = protein_tier(protein, len(candidate.introns))
     row.update(
@@ -906,6 +941,84 @@ def _score_candidate(
     return row
 
 
+class EvidenceContext:
+    """Load and index evidence once per stage for original and repaired CDSs.
+
+    Evidence is independent of the selection policy. Predictor concordance is
+    supplied separately for an original candidate block; a reconstructed CDS
+    receives no independent predictor lineage.
+    """
+
+    def __init__(self, *, transcripts, chains, repeats, retained_targets,
+                 seed_targets, genome, junctions, expected_protein_copies,
+                 boundary_transcripts=None):
+        self.transcripts = self.index(transcripts)
+        self.boundary_transcripts = (
+            self.transcripts if boundary_transcripts is None
+            else self.index(boundary_transcripts)
+        )
+        self.chains = self.index(chains)
+        self.repeats = self.index(repeats, stranded=False)
+        self.no_predictors = self.index(())
+        self.retained_targets = retained_targets
+        self.seed_targets = seed_targets
+        self.genome = genome
+        self.junctions = junctions
+        self.expected_protein_copies = expected_protein_copies
+        self.counts = {
+            "merged_rna_transcript_count": len(transcripts),
+            "boundary_rna_distinct_chain_count": len(
+                transcripts if boundary_transcripts is None else boundary_transcripts),
+            "protein_chain_count": len(chains),
+            "repeat_feature_count": len(repeats),
+            "classified_te_feature_count": sum(
+                is_classified_te(repeat.classification) for repeat in repeats),
+            "junction_aggregate_count": len(junctions),
+        }
+
+    @staticmethod
+    def index(items, *, stranded=True):
+        return IntervalIndex(
+            items, seqid=lambda item: item.seqid, start=lambda item: item.start,
+            end=lambda item: item.end,
+            strand=(lambda item: item.strand) if stranded else None,
+        )
+
+    @classmethod
+    def from_paths(cls, paths, *, genome, junctions, expected_protein_copies):
+        trace = load_trace(Path(paths["nonhc_trace"]))
+        chains = (
+            load_protein_chains(Path(paths["direct_chains"]), "direct")
+            + load_protein_chains(Path(paths["nonhc_chains"]), "nonhc", trace=trace)
+        )
+        seeds = load_diamond_targets(Path(paths["direct_hits"]), Path(paths["nonhc_hits"]))
+        transcripts = load_stringtie_transcripts(Path(paths["merged_gtf"]))
+        return cls(
+            transcripts=transcripts,
+            boundary_transcripts=load_rna_cds_transcripts(
+                transcripts, paths.get("sample_gtfs", ())),
+            chains=chains, repeats=load_repeats(Path(paths["repeats"])),
+            retained_targets=retained_protein_targets(chains, seeds), seed_targets=seeds,
+            genome=genome, junctions=junctions,
+            expected_protein_copies=expected_protein_copies,
+        )
+
+    def score_candidate(self, candidate, *, candidate_index=None):
+        return _score_candidate(
+            candidate, self.no_predictors if candidate_index is None else candidate_index,
+            self.transcripts, self.chains, self.repeats, self.junctions, self.genome,
+            self.retained_targets, self.seed_targets, self.expected_protein_copies,
+            boundary_index=(None if self.boundary_transcripts is self.transcripts
+                            else self.boundary_transcripts),
+        )
+
+    def score_blocks(self, candidate_blocks):
+        for candidates in candidate_blocks:
+            candidate_index = self.index(candidates)
+            for candidate in candidates:
+                yield self.score_candidate(candidate, candidate_index=candidate_index)
+
+
 def score_candidate_blocks(
     candidate_blocks: Iterable[Sequence[CandidateRecord]],
     transcripts: Sequence[RnaTranscript],
@@ -916,32 +1029,17 @@ def score_candidate_blocks(
     retained_targets: Mapping[str, frozenset[str]],
     seed_targets: Mapping[str, frozenset[str]],
     expected_protein_copies: int,
+    *, boundary_transcripts=None,
 ) -> Iterator[dict[str, object]]:
     """Score independent candidate blocks with one global evidence index."""
 
-    transcript_index = IntervalIndex(
-        transcripts, seqid=lambda x: x.seqid, start=lambda x: x.start,
-        end=lambda x: x.end, strand=lambda x: x.strand,
+    context = EvidenceContext(
+        transcripts=transcripts, chains=chains, repeats=repeats,
+        junctions=junctions, genome=genome, retained_targets=retained_targets,
+        seed_targets=seed_targets, expected_protein_copies=expected_protein_copies,
+        boundary_transcripts=boundary_transcripts,
     )
-    chain_index = IntervalIndex(
-        chains, seqid=lambda x: x.seqid, start=lambda x: x.start,
-        end=lambda x: x.end, strand=lambda x: x.strand,
-    )
-    repeat_index = IntervalIndex(
-        repeats, seqid=lambda x: x.seqid, start=lambda x: x.start,
-        end=lambda x: x.end,
-    )
-    for candidates in candidate_blocks:
-        candidate_index = IntervalIndex(
-            candidates, seqid=lambda x: x.seqid, start=lambda x: x.start,
-            end=lambda x: x.end, strand=lambda x: x.strand,
-        )
-        for candidate in candidates:
-            yield _score_candidate(
-                candidate, candidate_index, transcript_index, chain_index,
-                repeat_index, junctions, genome, retained_targets, seed_targets,
-                expected_protein_copies,
-            )
+    yield from context.score_blocks(candidate_blocks)
 
 
 def score_candidates(
@@ -954,11 +1052,13 @@ def score_candidates(
     retained_targets: Mapping[str, frozenset[str]],
     seed_targets: Mapping[str, frozenset[str]],
     expected_protein_copies: int,
+    *, boundary_transcripts=None,
 ) -> list[dict[str, object]]:
     return list(
         score_candidate_blocks(
             (candidates,), transcripts, chains, repeats, junctions, genome,
             retained_targets, seed_targets, expected_protein_copies,
+            boundary_transcripts=boundary_transcripts,
         )
     )
 

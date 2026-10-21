@@ -1,5 +1,6 @@
 rule prepare_selected_coding_models:
     input:
+        code=source_inputs(workflow.basedir, "coding_prepare"),
         candidates=f"{CANDIDATE_DIR}/{ASSEMBLY_ID}.candidate_universe.tsv",
         selection_audit=f"{SELECTION_DIR}/{ASSEMBLY_ID}.selection_audit.tsv",
         selection_complete=SELECTION_COMPLETE,
@@ -21,11 +22,13 @@ rule prepare_selected_coding_models:
 
 rule group_coding_models:
     input:
+        code=source_inputs(workflow.basedir, "coding_group"),
         gff3=CODING_GFF3,
         mapping=CODING_MAPPING,
         coding_complete=CODING_COMPLETE,
         candidates=f"{CANDIDATE_DIR}/{ASSEMBLY_ID}.candidate_universe.tsv",
         source_models=f"{CANDIDATE_DIR}/{ASSEMBLY_ID}.source_models.tsv",
+        policy=lambda wildcards: config["policy"],
     output:
         gff3=GROUPED_GFF3,
         mapping=GROUPING_MAPPING,

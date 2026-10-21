@@ -100,8 +100,8 @@ def main():
         assert forbidden not in dry, forbidden
     assert "rule import_rna_bam" in dry
     run("bam_execute", cfg, "rna_evidence", "junction_evidence")
-    preflight = json.loads((root / "runs/bam/00_preflight/preflight.json").read_text())
-    assert preflight["rna_input_mode"] == "bam" and preflight["sample_count"] == 2
+    preflight = json.loads((root / "runs/bam/00_preflight/inputs/input_validation.json").read_text())["payload"]
+    assert preflight["input_mode"] == "bam" and len(preflight["semantic_samples"]) == 2
     merged = root / "runs/bam/04_transcripts/merged/RNA_SMOKE.stringtie.merged.gtf"
     assert "\ttranscript\t" in merged.read_text()
     junctions = root / "runs/bam/06_evidence/01_junctions/aggregate/RNA_SMOKE.hq_junctions.tsv.gz"

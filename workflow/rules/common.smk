@@ -3,6 +3,8 @@ from collections import Counter
 import re
 
 from geneinit.contracts.samples import load_samples
+from geneinit.contracts.workflow import source_inputs
+from geneinit.contracts.preflight import input_preflight_config
 from geneinit.contracts.alignments import check_staging_paths, rna_input_config
 
 
@@ -45,6 +47,9 @@ if not EXECUTION_ROOT or EXECUTION_ROOT == "/":
 
 PREFLIGHT_DIR = f"{EXECUTION_ROOT}/{EXECUTION_ID}/00_preflight"
 PREFLIGHT_COMPLETE = f"{PREFLIGHT_DIR}/preflight.complete.tsv"
+INPUT_PREFLIGHT_DIR = f"{PREFLIGHT_DIR}/inputs"
+INPUT_PREFLIGHT_COMPLETE = f"{INPUT_PREFLIGHT_DIR}/preflight.complete.tsv"
+INPUT_VALIDATION = f"{INPUT_PREFLIGHT_DIR}/input_validation.json"
 REFERENCE_DIR = f"{EXECUTION_ROOT}/{EXECUTION_ID}/01_reference"
 READS_DIR = f"{EXECUTION_ROOT}/{EXECUTION_ID}/02_reads"
 ALIGNMENT_DIR = f"{EXECUTION_ROOT}/{EXECUTION_ID}/03_alignment"

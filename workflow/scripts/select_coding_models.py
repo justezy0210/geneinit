@@ -29,6 +29,7 @@ from geneinit.selection.balanced import (  # noqa: E402
     base_audit_row,
     select_balanced_base,
 )
+from geneinit.selection.unified import ENGINE, UnifiedSelector
 
 
 @contextmanager
@@ -65,6 +66,9 @@ with policy_path.open(encoding="utf-8") as handle:
 if policy_document.get("selector_schema") != "geneinit_selector_policy_v1":
     raise ValueError("policy does not contain geneinit_selector_policy_v1")
 policy = policy_document["selector_core"]
+engine = policy.get("engine", "legacy_v2")
+if engine not in ("legacy_v2", ENGINE):
+    raise ValueError(f"unsupported selection engine: {engine}")
 
 neutral = confirmed_only(policy)
 te_inputs = list(getattr(snakemake.input, "te_evidence", []))
@@ -107,20 +111,32 @@ with ExitStack() as stack:
             for record in records:
                 record.row.update(classifier.classify(record.row, protein_hashes[record.key]))
                 seen_contexts.add(record.key)
-        loci, edges = build_loci_and_edges(
-            str(snakemake.params.assembly_id), records
-        )
-        base_selected, base_calls = select_balanced_base(loci, edges, policy)
-        selected = evaluate_and_select(
-            loci,
-            edges,
-            policy,
-            sample_count=int(snakemake.params.sample_count),
-            replicates_per_condition=int(
-                snakemake.params.replicates_per_condition
-            ),
-            base_selected_keys=base_selected,
-        )
+        if engine == ENGINE:
+            selector = UnifiedSelector(
+                str(snakemake.params.assembly_id), policy,
+                sample_count=int(snakemake.params.sample_count),
+                replicates_per_condition=int(snakemake.params.replicates_per_condition),
+            )
+            selector.update(records)
+            records = list(selector.records.values())
+            loci, edges = selector.last_loci, selector.last_edges
+            selected = selector.selected
+            base_selected, base_calls = set(), {}
+        else:
+            loci, edges = build_loci_and_edges(
+                str(snakemake.params.assembly_id), records
+            )
+            base_selected, base_calls = select_balanced_base(loci, edges, policy)
+            selected = evaluate_and_select(
+                loci,
+                edges,
+                policy,
+                sample_count=int(snakemake.params.sample_count),
+                replicates_per_condition=int(
+                    snakemake.params.replicates_per_condition
+                ),
+                base_selected_keys=base_selected,
+            )
 
         ordered_records = sorted(
             records,
@@ -129,7 +145,8 @@ with ExitStack() as stack:
             ),
         )
         for record in ordered_records:
-            base_audit_writer.writerow(base_audit_row(base_calls[record.key]))
+            if base_calls:
+                base_audit_writer.writerow(base_audit_row(base_calls[record.key]))
             loci_writer.writerow(
                 {
                     "candidate_id": record.key,
@@ -171,6 +188,8 @@ write_key_file(Path(snakemake.output.base_selected), sorted(base_selected_all))
 write_key_file(Path(snakemake.output.selected), selected_order)
 
 base_summary_rows = [
+    ("engine", engine),
+    ("status", "NOT_APPLICABLE" if engine == ENGINE else "COMPLETED"),
     ("assembly_id", snakemake.params.assembly_id),
     ("candidate_count", candidate_count),
     ("locus_count", locus_count),
@@ -184,6 +203,7 @@ base_summary_rows.extend(
 write_metric_table(Path(snakemake.output.base_summary), base_summary_rows)
 
 summary_rows = [
+    ("engine", engine),
     ("assembly_id", snakemake.params.assembly_id),
     ("policy_id", policy["policy_id"]),
     ("policy_status", policy_document["status"]),
@@ -209,12 +229,16 @@ write_completion(
     Path(snakemake.output.complete),
     (
         ("schema_version", 2),
+        ("engine", engine),
+        ("sample_count", int(snakemake.params.sample_count)),
+        ("replicates_per_condition", int(snakemake.params.replicates_per_condition)),
         ("repeat_scope", REPEAT_SCOPE),
         ("rna_support_basis", "candidate_condition_junctions"),
         ("status", "PASS_MIGRATION_PENDING"),
         ("assembly_id", snakemake.params.assembly_id),
         ("policy_id", policy["policy_id"]),
         ("policy_sha256", sha256_file(policy_path)),
+        ("component_evidence_sha256", sha256_file(Path(snakemake.input.components))),
         ("candidate_count", candidate_count),
         ("selected_count", len(selected_order)),
         ("balanced_base_selected_count", len(base_selected_all)),

@@ -492,6 +492,8 @@ def load_postqc_candidate_inputs(
     selection_audit: Path,
     selected_candidate_ids: set[str],
     bridge_policy: Mapping[str, object],
+    *,
+    retain_all: bool = False,
 ) -> tuple[
     list[dict[str, str]],
     dict[str, dict[str, str]],
@@ -567,7 +569,7 @@ def load_postqc_candidate_inputs(
             previous_key = key
             selected = candidate_id in selected_candidate_ids
             eligible = _eligible_bridge(candidate, evidence, audit, bridge_policy)
-            if selected or eligible:
+            if retain_all or selected or eligible:
                 evidence_by_candidate[candidate_id] = evidence
                 audit_by_candidate[candidate_id] = audit
             if eligible:
@@ -1075,6 +1077,7 @@ def _node_state_sha256(nodes: Mapping[str, Node]) -> str:
             "candidate_id": node.candidate_id,
             "source_status": node.source_status,
             "retired": node.retired,
+            "active_fusion": node.active_fusion,
             "seqid": node.model.seqid,
             "strand": node.model.strand,
             "cds": [
@@ -1133,8 +1136,8 @@ def iterate_structural_qc(
     bridge_reviews: list[dict[str, object]] = []
     retirements: list[dict[str, object]] = []
     iteration_rows: list[dict[str, object]] = []
+    before = _node_state_sha256(nodes)
     for iteration in range(1, maximum_iterations + 1):
-        before = _node_state_sha256(nodes)
         supported, strong_rna, reviews, retired = apply_iteration()
         after = _node_state_sha256(nodes)
         changed = before != after
@@ -1163,6 +1166,8 @@ def iterate_structural_qc(
                 iteration_rows,
                 iteration,
             )
+        # Only apply_iteration mutates structural state between these checks.
+        before = after
     raise PostQcError(
         "post-QC did not converge within "
         f"maximum_iterations={maximum_iterations}; last state still changed"
@@ -1353,6 +1358,7 @@ def run_postqc(
     te_evidence_path: Path | None = None,
     assembly_id: str | None = None,
     te_classification_path: Path | None = None,
+    unified_context: Mapping[str, object] | None = None,
 ) -> None:
     with policy_path.open(encoding="utf-8") as handle:
         policy_document = json.load(handle)
@@ -1360,6 +1366,29 @@ def run_postqc(
     if postqc_schema not in {"geneinit_postqc_policy_v1", "geneinit_postqc_policy_v2"}:
         raise PostQcError("policy does not contain a supported GeneInIt post-QC schema")
     postqc_policy = policy_document["postqc"]
+    unified = postqc_policy.get("selection_engine") == "unified_v1"
+    selector_unified = policy_document.get("selector_core", {}).get("engine") == "unified_v1"
+    if unified != selector_unified:
+        raise PostQcError("selection and post-QC engines must agree")
+    if unified:
+        if not unified_context:
+            raise PostQcError("unified post-QC requires the original evidence context")
+        receipt = dict(
+            (row["field"], row["value"]) for row in _read_table(
+                Path(unified_context["selection_complete"]), {"field", "value"}
+            )
+        )
+        if receipt.get("policy_sha256") != sha256_file(policy_path):
+            raise PostQcError("selection checkpoint policy SHA256 mismatch")
+        for name, path in (
+            ("component_evidence_sha256", component_evidence),
+            ("audit_sha256", selection_audit),
+        ):
+            if receipt.get(name) != sha256_file(path):
+                raise PostQcError(f"selection checkpoint {name} mismatch")
+        for name in ("sample_count", "replicates_per_condition"):
+            if int(receipt.get(name, -1)) != int(unified_context[name]):
+                raise PostQcError(f"selection checkpoint {name} mismatch")
     maximum_iterations = int(postqc_policy["maximum_iterations"])
     if maximum_iterations < 1:
         raise PostQcError("post-QC maximum_iterations must be positive")
@@ -1406,6 +1435,7 @@ def run_postqc(
         selection_audit,
         selected_candidate_ids,
         bridge_policy,
+        retain_all=unified,
     )
 
     nodes: dict[str, Node] = {}
@@ -1455,6 +1485,22 @@ def run_postqc(
     genome = read_fasta(genome_path)
     classifier = TeClassifier(te_evidence_path, assembly_id) if confirmed_only(bridge_policy) else None
     generated_classifications = {}
+    repair = None
+    if unified:
+        from geneinit.postqc.unified import RepairEvidence, UnifiedRepair
+        scorer = RepairEvidence.from_paths(
+            unified_context["paths"], genome=genome, junctions=junctions,
+            expected_protein_copies=int(unified_context["expected_protein_copies"]),
+        )
+        repair = UnifiedRepair(
+            policy=policy_document["selector_core"], assembly_id=assembly_id,
+            sample_count=int(unified_context["sample_count"]),
+            replicates_per_condition=int(unified_context["replicates_per_condition"]),
+            evidence_by_candidate=evidence_by_candidate,
+            audit_by_candidate=audit_by_candidate, scorer=scorer,
+        )
+        if repair.selector.selected_keys != selected_candidate_ids:
+            raise PostQcError("unified checkpoint differs from grouped selection")
 
     def classify_generated(model, left_candidate, right_candidate):
         identity = model_identity(model)
@@ -1474,6 +1520,22 @@ def run_postqc(
         list[dict[str, object]],
         list[dict[str, object]],
     ]:
+        if repair is not None:
+            # Reconstruct proposals without accepting them into the annotation.
+            # Only the shared selector can adopt or retire a candidate.
+            proposals = dict(nodes)
+            reviews = []
+            proposed = recover_strong_rna_bridges(
+                proposals, junctions, genome, minimum_same_frame_bp,
+                minimum_hq_reads, minimum_replicated_conditions,
+                thresholds.automatic_max_intron_bp,
+                thresholds.review_max_intron_bp,
+                reviews, classify_generated,
+            )
+            supported, strong_rna, retired = repair.apply(
+                nodes, proposals, proposed, generated_classifications
+            )
+            return supported, strong_rna, reviews, retired
         supported = recover_supported_bridges(
             nodes, candidate_rows, evidence_by_candidate, audit_by_candidate,
             minimum_same_frame_bp, bridge_policy,
@@ -1500,6 +1562,19 @@ def run_postqc(
         converged_iteration,
     ) = iterate_structural_qc(
         nodes, maximum_iterations, apply_iteration
+    )
+    from geneinit.selection.core import AUDIT_COLUMNS
+    repair_audit_path = output_gff3.with_suffix(".unified_selection.tsv")
+    repair_rounds_path = output_gff3.with_suffix(".unified_rounds.tsv")
+    _write_table(
+        repair_audit_path, ("round", *AUDIT_COLUMNS),
+        repair.decisions if repair is not None else [],
+    )
+    _write_table(
+        repair_rounds_path,
+        ("round", "evaluated_candidates", "reused_candidates",
+         "affected_candidates", "resolved_loci", "untouched_candidates"),
+        repair.rounds if repair is not None else [],
     )
     if te_classification_path is not None:
         with atomic_text(te_classification_path) as handle:
@@ -1640,6 +1715,13 @@ def run_postqc(
         ("multi_component_gene_count", split_genes),
         ("multi_gene_component_count", merged_roots),
     ]
+    if repair is not None:
+        summary_rows.extend([
+            ("selection_engine", "unified_v1"),
+            ("new_candidate_evaluations", sum(row["evaluated_candidates"] for row in repair.rounds)),
+            ("cached_candidate_evaluations", sum(row["reused_candidates"] for row in repair.rounds)),
+            ("local_selection_rounds", len(repair.rounds)),
+        ])
     summary_rows.extend((f"operation::{key}", value) for key, value in sorted(operation_counts.items()))
     _write_table(summary_path, ("metric", "value"), ({"metric": key, "value": value} for key, value in summary_rows))
     completion: list[tuple[str, object]] = [
@@ -1672,4 +1754,10 @@ def run_postqc(
         completion.append(("te_classification_sha256", sha256_file(te_classification_path)))
     if iterations_path is not None:
         completion.append(("iterations_sha256", sha256_file(iterations_path)))
+    if repair is not None:
+        completion.extend([
+            ("selection_engine", "unified_v1"),
+            ("unified_selection_sha256", sha256_file(repair_audit_path)),
+            ("unified_rounds_sha256", sha256_file(repair_rounds_path)),
+        ])
     _write_table(complete_path, ("metric", "value"), ({"metric": key, "value": value} for key, value in completion))

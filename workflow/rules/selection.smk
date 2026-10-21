@@ -1,5 +1,7 @@
 rule select_coding_models:
     input:
+        code=source_inputs(workflow.basedir, "selection"),
+        preflight=PREFLIGHT_COMPLETE,
         components=COMPONENT_EVIDENCE,
         proteins=f"{CANDIDATE_DIR}/{ASSEMBLY_ID}.candidate_universe.proteins.faa",
         te_evidence=lambda wildcards: [config["te_evidence"]] if config.get("te_evidence") else [],

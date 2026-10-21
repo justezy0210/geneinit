@@ -8,6 +8,7 @@ JUNCTION_INDICES = [f"{path}.csi" for path in JUNCTION_TABLES]
 
 rule extract_sample_junctions:
     input:
+        code=source_inputs(workflow.basedir, "junction_extract"),
         bam=_sample_bam,
         csi=_sample_csi,
     output:
@@ -36,6 +37,7 @@ rule extract_sample_junctions:
 
 rule aggregate_junctions:
     input:
+        code=source_inputs(workflow.basedir, "junction_aggregate"),
         genome=lambda wildcards: config["genome"],
         tables=JUNCTION_TABLES,
         indices=JUNCTION_INDICES,
@@ -66,10 +68,15 @@ rule junction_evidence:
 
 rule score_component_evidence:
     input:
+        code=source_inputs(workflow.basedir, "evidence"),
         candidates=f"{CANDIDATE_DIR}/{ASSEMBLY_ID}.candidate_universe.tsv",
         candidate_complete=CANDIDATE_COMPLETE,
         genome=lambda wildcards: config["genome"],
         merged_gtf=f"{TRANSCRIPTS_DIR}/merged/{ASSEMBLY_ID}.stringtie.merged.gtf",
+        sample_gtfs=expand(
+            f"{TRANSCRIPTS_DIR}/samples/{{sample}}/{ASSEMBLY_ID}.{{sample}}.stringtie.gtf",
+            sample=SAMPLES,
+        ),
         junctions=JUNCTION_AGGREGATE,
         junction_index=f"{JUNCTION_AGGREGATE}.csi",
         junction_complete=JUNCTION_COMPLETE,

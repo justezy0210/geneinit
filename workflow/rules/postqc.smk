@@ -1,5 +1,6 @@
 rule run_structural_postqc:
     input:
+        code=source_inputs(workflow.basedir, "postqc"),
         gff3=GROUPED_GFF3,
         te_evidence=lambda wildcards: [config["te_evidence"]] if config.get("te_evidence") else [],
         grouping_mapping=GROUPING_MAPPING,
@@ -11,6 +12,18 @@ rule run_structural_postqc:
         junction_index=f"{JUNCTION_AGGREGATE}.csi",
         genome=lambda wildcards: config["genome"],
         policy=lambda wildcards: config["policy"],
+        selection_complete=SELECTION_COMPLETE,
+        merged_gtf=f"{TRANSCRIPTS_DIR}/merged/{ASSEMBLY_ID}.stringtie.merged.gtf",
+        sample_gtfs=expand(
+            f"{TRANSCRIPTS_DIR}/samples/{{sample}}/{ASSEMBLY_ID}.{{sample}}.stringtie.gtf",
+            sample=SAMPLES,
+        ),
+        direct_chains=f"{GENEMARK_RESULT}/selector_evidence/direct_top_chains.gff",
+        direct_hits=f"{GENEMARK_RESULT}/selector_evidence/direct_protein_hits.tsv",
+        nonhc_chains=f"{GENEMARK_RESULT}/selector_evidence/nonhc_top_chains.gff",
+        nonhc_hits=f"{GENEMARK_RESULT}/selector_evidence/nonhc_protein_hits.tsv",
+        nonhc_trace=f"{GENEMARK_RESULT}/selector_evidence/nonhc.trace",
+        repeats=lambda wildcards: config["repeat_gff"],
     output:
         gff3=POSTQC_GFF3,
         te_classification=f"{POSTQC_DIR}/{ASSEMBLY_ID}.te_classification.json",
@@ -23,10 +36,15 @@ rule run_structural_postqc:
         iterations=f"{POSTQC_DIR}/{ASSEMBLY_ID}.iterations.tsv",
         summary=f"{POSTQC_DIR}/{ASSEMBLY_ID}.postqc.summary.tsv",
         complete=POSTQC_COMPLETE,
+        unified_selection=str(Path(POSTQC_GFF3).with_suffix(".unified_selection.tsv")),
+        unified_rounds=str(Path(POSTQC_GFF3).with_suffix(".unified_rounds.tsv")),
     params:
         repo_root=str(workflow.basedir),
         assembly_id=ASSEMBLY_ID,
         seqids=REFERENCE_SEQUENCE_IDS,
+        sample_count=len(SAMPLES),
+        replicates_per_condition=REPLICATES_PER_CONDITION,
+        expected_protein_copies=int(config["expected_protein_copies"]),
     log:
         f"{EXECUTION_ROOT}/{EXECUTION_ID}/logs/iterative_postqc/structural.log",
     conda:

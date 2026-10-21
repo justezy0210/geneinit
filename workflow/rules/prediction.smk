@@ -1,12 +1,14 @@
 rule predictor_container_preflight:
     input:
-        preflight=PREFLIGHT_COMPLETE,
+        code=source_inputs(workflow.basedir, "predictor_container"),
+        preflight=INPUT_PREFLIGHT_COMPLETE,
         sif=lambda wildcards: _deployment_value("predictor_sif"),
     output:
         versions=f"{PREDICTION_DIR}/00_container/software_versions.txt",
         complete=PREDICTOR_PREFLIGHT,
     params:
         repo_root=str(workflow.basedir),
+        deployment_snapshot=lambda wildcards: json.dumps(config.get("deployment", {}), sort_keys=True),
     log:
         f"{EXECUTION_ROOT}/{EXECUTION_ID}/logs/prediction/container_preflight.log",
     conda:
@@ -17,6 +19,7 @@ rule predictor_container_preflight:
 
 rule genemark_etp:
     input:
+        code=source_inputs(workflow.basedir, "genemark"),
         container=PREDICTOR_PREFLIGHT,
         genome=lambda wildcards: config["genome"],
         proteins=lambda wildcards: config["protein_fasta"],
@@ -55,6 +58,7 @@ rule genemark_etp:
 
 rule build_full_etp_hints:
     input:
+        code=source_inputs(workflow.basedir, "prediction_hints"),
         container=PREDICTOR_PREFLIGHT,
         genemark_complete=GENEMARK_COMPLETE,
         work=GENEMARK_WORK,
@@ -75,6 +79,7 @@ rule build_full_etp_hints:
 
 rule prepare_augustus_config:
     input:
+        code=source_inputs(workflow.basedir, "augustus_config"),
         container=PREDICTOR_PREFLIGHT,
     output:
         config=directory(AUGUSTUS_CONFIG),
@@ -91,6 +96,7 @@ rule prepare_augustus_config:
 
 rule augustus_direct:
     input:
+        code=source_inputs(workflow.basedir, "augustus"),
         prediction_resume=([AUGUSTUS_PREDICTION_RESUME] if AUGUSTUS_PREDICTION_RESUME else []),
         optimization_start=([AUGUSTUS_OPTIMIZATION_START] if AUGUSTUS_OPTIMIZATION_START else []),
         training_snapshot=([AUGUSTUS_TRAINING_SNAPSHOT["genbank"]] if AUGUSTUS_TRAINING_SNAPSHOT else []),
@@ -130,6 +136,7 @@ rule augustus_direct:
 
 rule prediction:
     input:
+        code=source_inputs(workflow.basedir, "prediction_complete"),
         genemark=GENEMARK_COMPLETE,
         hints=ETP_HINTS_COMPLETE,
         augustus=AUGUSTUS_COMPLETE,
@@ -149,6 +156,7 @@ rule prediction:
 
 rule run_masking_rescue:
     input:
+        code=source_inputs(workflow.basedir, "masking_rescue"),
         augustus_complete=AUGUSTUS_COMPLETE,
         genemark_complete=GENEMARK_COMPLETE,
         genome=lambda wildcards: config["genome"],

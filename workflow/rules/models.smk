@@ -1,5 +1,6 @@
 rule build_candidate_universe:
     input:
+        code=source_inputs(workflow.basedir, "models"),
         prediction=PREDICTION_COMPLETE,
         genome=lambda wildcards: config["genome"],
         augustus=f"{AUGUSTUS_RESULT}/augustus.hints.gtf",

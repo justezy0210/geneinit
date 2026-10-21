@@ -31,4 +31,20 @@ run_postqc(
     Path(snakemake.input.te_evidence[0]) if snakemake.input.te_evidence else None,
     str(snakemake.params.assembly_id),
     Path(snakemake.output.te_classification),
+    {
+        "selection_complete": str(snakemake.input.selection_complete),
+        "sample_count": int(snakemake.params.sample_count),
+        "replicates_per_condition": int(snakemake.params.replicates_per_condition),
+        "expected_protein_copies": int(snakemake.params.expected_protein_copies),
+        "paths": {
+            "sample_gtfs": list(getattr(snakemake.input, "sample_gtfs", ())),
+            **{
+            name: str(getattr(snakemake.input, name))
+            for name in (
+                "merged_gtf", "direct_chains", "direct_hits",
+                "nonhc_chains", "nonhc_hits", "nonhc_trace", "repeats",
+            )
+            },
+        },
+    },
 )

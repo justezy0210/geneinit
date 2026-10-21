@@ -236,6 +236,8 @@ def group_coding_models(
     pair_audit: Path,
     summary_path: Path,
     complete_path: Path,
+    *,
+    defer_grouping: bool = False,
 ) -> None:
     order, by_transcript = load_raw_gff3(coding_gff3)
     by_candidate = {model.candidate_id: model for model in by_transcript.values()}
@@ -254,7 +256,7 @@ def group_coding_models(
         metadata = {row["candidate_id"]: row for row in reader}
     if set(metadata) != set(by_candidate):
         raise UtrError("coding GFF3 and mapping candidate sets differ")
-    lineages = _lineage_sets(candidate_table, source_models)
+    lineages = {} if defer_grouping else _lineage_sets(candidate_table, source_models)
     loci: defaultdict[str, list[str]] = defaultdict(list)
     for candidate_id in by_candidate:
         loci[metadata[candidate_id]["selection_locus_id"]].append(candidate_id)
@@ -262,7 +264,9 @@ def group_coding_models(
     disjoint = DisjointSet(by_candidate)
     assessments: dict[tuple[str, str], PairAssessment] = {}
     direct_reasons: defaultdict[str, set[str]] = defaultdict(set)
-    for locus_id in sorted(loci):
+    # Unified selection assigns biological gene containers after repair.
+    # Here GFF containers are only one-transcript transport records.
+    for locus_id in ([] if defer_grouping else sorted(loci)):
         candidates = sorted(loci[locus_id])
         for left_id, right_id in combinations(candidates, 2):
             assessment = assess_pair(

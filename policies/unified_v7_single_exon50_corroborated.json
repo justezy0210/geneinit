@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "policy_id": "geneinit_unified_rna50_se50_corroborated_v7_experimental",
+  "policy_version": 7,
+  "status": "EXPERIMENTAL_NOT_VALIDATED",
+  "selector_schema": "geneinit_selector_policy_v1",
+  "selector_core": {
+    "policy_id": "geneinit_unified_rna50_se50_corroborated_v7",
+    "hard_qc": {
+      "common_qc_pass": 1,
+      "min_protein_aa": 50,
+      "single_exon_min_protein_aa": 50
+    },
+    "rna": {
+      "min_recurrent_fraction": 0.5,
+      "max_nonrecurrent_introns": null,
+      "strong_min_tier": 3,
+      "moderate_min_tier": 2,
+      "min_samples_recurrent": 2,
+      "min_replicates_strong": 2,
+      "long_gene_evidence_rescue": {
+        "enabled": true,
+        "min_introns": 20,
+        "min_recurrent_fraction": 0.8,
+        "min_protein_tier": 2,
+        "min_protein_chain_recall": 0.9,
+        "require_retained_unique_target": true,
+        "require_low_repeat": false
+      }
+    },
+    "protein": {
+      "moderate_min_tier": 2,
+      "strong_min_tier": 3,
+      "min_core_metric": 0.8,
+      "required_terminal_matches": 2,
+      "max_target_loci_per_expected_copy": 1.0,
+      "uniqueness_basis": "retained_only",
+      "allow_strong_unique_core_route": true
+    },
+    "predictor": {
+      "exact_min_tier": 3,
+      "require_both_predictors": true,
+      "allow_exact_moderate_unique_route": true
+    },
+    "repeat": {
+      "high_cds_fraction": 0.5,
+      "severe_cds_fraction": 0.8
+    },
+    "graph": {
+      "incompatible_relations": [
+        "SAME_CHAIN",
+        "HARD_OVERLAP"
+      ],
+      "alternative_splice": "require_unique_evidence",
+      "fusion_center_survival_any": [
+        "STRONG_SPANNING_JUNCTION",
+        "STRONG_UNIQUE_FULL_PROTEIN"
+      ],
+      "fusion_center_precedence": {
+        "minimum_intron_count": 2,
+        "minimum_protein_chain_recall": 0.95
+      },
+      "base_handling": "single_admission_single_graph",
+      "base_alt_current_support": {
+        "min_recurrent_fraction": 0.8,
+        "max_nonrecurrent_introns": 2,
+        "relative_rna_min_unique_junctions_per_core_alt": 1,
+        "long_gene_min_introns": 10,
+        "long_gene_min_protein_cds_f1": 0.85,
+        "long_gene_required_terminal_matches": 2,
+        "long_gene_require_unique_target_linked": true
+      }
+    },
+    "te_policy_id": "geneinit_te_confirmed_only_v2",
+    "engine": "unified_v1",
+    "rna_cds_boundary_ranking": true,
+    "rna_cds_competition_ranking": true,
+    "whole_model_ranking": "corroborated"
+  },
+  "postqc_schema": "geneinit_postqc_policy_v2",
+  "postqc": {
+    "minimum_same_frame_overlap_bp": 3,
+    "bridge_recovery": {
+      "minimum_rna_tier": 2,
+      "minimum_protein_tier": 2,
+      "maximum_repeat_cds_fraction": 0.8,
+      "exclude_active_fusion": true,
+      "te_policy_id": "geneinit_te_confirmed_only_v2"
+    },
+    "rna_bridge_reconstruction": {
+      "minimum_hq_reads": 3,
+      "minimum_replicated_conditions": 1,
+      "intron_length_policy": {
+        "mode": "adaptive",
+        "minimum_training_intron_count": 2000,
+        "automatic_quantile": 0.995,
+        "review_quantile": 0.999,
+        "automatic_floor_bp": 5000,
+        "automatic_ceiling_bp": 50000,
+        "review_multiplier": 4.0,
+        "review_ceiling_bp": 500000,
+        "fallback_automatic_max_intron_bp": 5000,
+        "fallback_review_max_intron_bp": 20000
+      },
+      "require_exact_exon_and_cds_boundaries": true,
+      "require_complete_orf": true
+    },
+    "unsupported_connector": {
+      "minimum_protected_neighbor_components": 2,
+      "external_support_basis": "rna_or_protein_tier_ge2_or_selector_route"
+    },
+    "maximum_iterations": 5,
+    "selection_engine": "unified_v1"
+  },
+  "note": "Experimental RNA/protein CDS concordance ranking. Preserve every v5 admission route, RNA50, the 50-aa floor, and legacy dual rank. An already eligible candidate also reaches dual rank 9 when a full-CDS RNA witness or self-strong coding-chain witness agrees with protein tier >=3 and all existing core metrics >=0.8, including phase and, for spliced models, intron precision. This ranking-only protein fit ignores copy-number uniqueness, exact terminal matches and chain_complete; it does not relax protein-only admission or repeat rescue. Missing phase fails core agreement. Within each rank retain v5 order: unopposed RNA conflict, full-CDS RNA presence, then strong RNA before strong unique full protein and the remaining original tie-breaks. Automatic fusion precedence requires no unopposed conflict and a full-CDS RNA or self-strong coding-chain witness. RNA witness existence is not a sample count, replication claim, translation proof, or proof of a full molecule. Protein fit measures mapped-chain/phase agreement, not whole-reference protein sequence coverage; a fragment can still fit a fragmentary chain. This policy remains experimental until genome-wide paired audits and replay validation are complete."
+}

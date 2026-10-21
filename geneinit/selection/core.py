@@ -13,10 +13,13 @@ import csv
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Mapping, Sequence
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence
 
 from geneinit.contracts.streaming import DiskBackedUniqueIds
 from geneinit.evidence.metrics import interval_bp, overlap_bp
+from geneinit.evidence.rna_cds import (
+    RNA_CDS_BASE_COLUMNS, RNA_CDS_COLUMNS, RNA_CDS_SAMPLE_COLUMNS, RNA_CDS_STATUSES,
+)
 from geneinit.evidence.repeats import validate_repeat_scope
 from geneinit.evidence.te_classification import TE_COLUMNS, confirmed_only, repeat_neutral, partition_pools
 from geneinit.models.candidate import CdsPart
@@ -33,11 +36,12 @@ AUDIT_COLUMNS = (
     "rna_nonrecurrent_introns_json",
     "repeat_risk", "repeat_override", "balanced_base_selected",
     "base_supplement", "eligible", "selected", "active_fusion",
+    "rna_cds_conflict_penalty", "rna_cds_complete_support", "selection_rank_json",
     "fusion_center_precedence",
     "routes", "decision", "blockers", "reasons",
 )
 
-AUDIT_COLUMNS += TE_COLUMNS
+AUDIT_COLUMNS += TE_COLUMNS + RNA_CDS_COLUMNS + RNA_CDS_SAMPLE_COLUMNS
 
 EDGE_COLUMNS = (
     "locus_id", "seqid", "strand", "left_candidate_id", "right_candidate_id",
@@ -120,6 +124,13 @@ class Record:
     routes: list[str] = field(default_factory=list)
     eligible: bool = False
     selected: bool = False
+    rna_cds_ranking: bool = False
+    rna_cds_competition: bool = False
+    rna_cds_conflict: bool = False
+    whole_model_ranking: str = ""
+    ranking_protein_fit: bool = False
+    ranking_multisample_rna: bool = False
+    ranking_directional_protein_fit: bool = False
     active_fusion: bool = False
     fusion_center_precedence: bool = False
     fusion_witnesses: set[str] = field(default_factory=set)
@@ -426,13 +437,239 @@ def _noncanonical_rna_rescue(record: Record) -> bool:
     )
 
 
+def rna_cds_conflict_penalty(row: Mapping[str, str], policy: Mapping[str, Any]) -> bool:
+    """New policies require fresh boundary evidence; legacy tables cannot bypass it."""
+    if not policy.get("rna_cds_boundary_ranking", False):
+        return False
+    competition = policy.get("rna_cds_competition_ranking", False)
+    missing = set(RNA_CDS_COLUMNS if competition else RNA_CDS_BASE_COLUMNS) - row.keys()
+    versions = {"2"} if competition else {"1", "2"}
+    if missing or str(row.get("rna_cds_boundary_version")) not in versions:
+        raise SelectionError("RNA CDS boundary evidence missing/stale; recompute components")
+    status = row["rna_cds_status"]
+    if status not in RNA_CDS_STATUSES:
+        raise SelectionError(f"invalid RNA CDS status: {status}")
+    if competition:
+        try:
+            conflicts = json.loads(row["rna_cds_unopposed_conflicts_json"])
+            fraction = float(row["rna_cds_unopposed_conflict_fraction"])
+        except (ValueError, TypeError) as exc:
+            raise SelectionError("invalid RNA CDS competition evidence") from exc
+        if (not isinstance(conflicts, list) or not 0 <= fraction <= 1
+                or bool(conflicts) != (fraction > 0)):
+            raise SelectionError("inconsistent RNA CDS competition evidence")
+        return bool(conflicts)
+    return status == "CONFLICT"
+
+
+def whole_model_ranking_mode(policy: Mapping[str, Any]) -> str:
+    """Require an explicit experiment and fresh RNA competition observations."""
+    if "whole_model_ranking" not in policy:
+        return ""
+    mode = policy["whole_model_ranking"]
+    if mode not in (
+        "minimal", "coherent", "protein_first", "corroborated", "corroborated_directional",
+        "corroborated_guarded", "corroborated_multisample",
+    ):
+        raise SelectionError("unknown whole_model_ranking experiment")
+    if not (
+        policy.get("rna_cds_boundary_ranking")
+        and policy.get("rna_cds_competition_ranking")
+    ):
+        raise SelectionError("whole_model_ranking requires RNA CDS competition evidence")
+    if mode == "corroborated_multisample":
+        minimum = policy.get("single_exon_min_full_cds_sample_sources")
+        if type(minimum) is not int or minimum < 2:
+            raise SelectionError("multisample ranking requires explicit sample-GTF minimum >=2")
+    return mode
+
+
+def whole_model_rna_support(record: Record) -> tuple[bool, bool]:
+    """Return witness existence, never assembly counts or replication claims."""
+    try:
+        full = json.loads(record.row["rna_cds_support_transcripts_json"])
+        chain = json.loads(record.row["rna_cds_chain_support_transcripts_json"])
+        strong_chain = _integer(record.row, "rna_cds_self_strong_chain")
+    except (KeyError, TypeError, ValueError) as error:
+        raise SelectionError("invalid whole-model RNA witnesses; recompute components") from error
+    if (
+        not isinstance(full, list) or not isinstance(chain, list)
+        or not all(isinstance(item, str) and item for item in (*full, *chain))
+        or strong_chain not in (0, 1)
+        or bool(full) != (record.row["rna_cds_status"] in {"SUPPORTED", "MIXED"})
+        or (strong_chain and (not chain or not record.introns
+                              or len(record.strong_introns) != len(record.introns)))
+    ):
+        raise SelectionError("inconsistent whole-model RNA witnesses; recompute components")
+    return bool(full), bool(strong_chain)
+
+
+def multisample_rna_support_for_ranking(record: Record, policy: Mapping[str, Any]) -> bool:
+    """Validate fresh full-CDS file provenance, without inferring replication."""
+    if record.whole_model_ranking != "corroborated_multisample":
+        return False
+    try:
+        version = record.row["rna_cds_sample_provenance_version"]
+        sources = json.loads(record.row["rna_cds_support_sample_sources_json"])
+        count = _integer(record.row, "rna_cds_support_sample_count")
+    except (KeyError, TypeError, ValueError, SelectionError) as error:
+        raise SelectionError("RNA CDS sample provenance missing/invalid; recompute components") from error
+    if (
+        str(version) != "1" or not isinstance(sources, list)
+        or not all(isinstance(source, str) and source
+                   and Path(source).is_absolute() and str(Path(source)) == source
+                   and ".." not in Path(source).parts for source in sources)
+        or sources != sorted(set(sources)) or count != len(sources)
+        or (sources and not whole_model_rna_support(record)[0])
+    ):
+        raise SelectionError("RNA CDS sample provenance stale/inconsistent; recompute components")
+    return count >= policy["single_exon_min_full_cds_sample_sources"]
+
+
+def protein_fit_for_ranking(record: Record, policy: Mapping[str, Any]) -> bool:
+    """Mapped-chain agreement for ranking only; never grant an admission route.
+
+    Copy-number uniqueness, exact termini and chain completeness are separate
+    observations. Single-exon concordance can require matching protein termini
+    or, in the multisample experiment, enough distinct full-CDS sample-GTF sources.
+    Core agreement includes phase and is not whole-reference sequence coverage.
+    """
+    return (
+        record.whole_model_ranking in {
+            "corroborated", "corroborated_directional", "corroborated_guarded",
+            "corroborated_multisample",
+        }
+        and _integer(record.row, "protein_tier") >= int(policy["protein"]["strong_min_tier"])
+        and _protein_core_pass(record, float(policy["protein"]["min_core_metric"]))
+        and (
+            record.whole_model_ranking not in {"corroborated_guarded", "corroborated_multisample"}
+            or bool(record.introns)
+            or (_integer(record.row, "protein_start_match") + _integer(record.row, "protein_stop_match")
+                >= int(policy["protein"]["required_terminal_matches"]))
+            or record.ranking_multisample_rna
+        )
+    )
+
+
+def directional_protein_fit_for_ranking(record: Record, policy: Mapping[str, Any]) -> bool:
+    """Candidate-side mapped-chain fit, not whole-reference coverage or admission.
+
+    Only the directional experiment can combine this fit with full-CDS RNA,
+    a self-strong coding chain and strong recurrent RNA. Reference-side recall
+    and F1 remain required by the existing corroborated path.
+    """
+    if record.whole_model_ranking != "corroborated_directional":
+        return False
+    keys = ["protein_model_precision", "protein_phase_fraction"]
+    if record.introns:
+        keys.append("protein_intron_precision")
+    return (
+        _integer(record.row, "protein_tier") >= int(policy["protein"]["moderate_min_tier"])
+        and all(_numeric(record.row, key, -1.0) >= float(policy["protein"]["min_core_metric"])
+                for key in keys)
+    )
+
+
+def _dual_evidence_rank(record: Record) -> bool:
+    legacy = {"STRONG_RECURRENT_RNA", "STRONG_UNIQUE_FULL_PROTEIN"} <= set(record.routes)
+    if not record.whole_model_ranking or record.whole_model_ranking == "protein_first":
+        return legacy
+    full, strong_chain = whole_model_rna_support(record)
+    if record.whole_model_ranking in {
+        "corroborated", "corroborated_directional", "corroborated_guarded",
+        "corroborated_multisample",
+    }:
+        return (
+            legacy or (record.ranking_protein_fit and (full or strong_chain))
+            or (record.ranking_directional_protein_fit
+                and full and strong_chain and record.strong_rna)
+        )
+    supported = record.strong_unique_full_protein and (
+        full or (record.strong_rna and strong_chain)
+    )
+    return legacy or supported if record.whole_model_ranking == "minimal" else supported
+
+
+def add_whole_model_ranking_reasons(record: Record) -> None:
+    if not record.whole_model_ranking or not record.eligible:
+        return
+    full, strong_chain = whole_model_rna_support(record)
+    record.reasons.append("WHOLE_MODEL_RANKING_" + record.whole_model_ranking.upper())
+    if record.strong_rna and not (full or strong_chain):
+        record.reasons.append("RNA50_ADMISSION_WITHOUT_WHOLE_RNA_WITNESS")
+    if record.whole_model_ranking in {
+        "corroborated", "corroborated_directional", "corroborated_guarded",
+        "corroborated_multisample",
+    }:
+        if record.whole_model_ranking == "corroborated_guarded" and not record.introns:
+            record.reasons.append("SINGLE_EXON_CONCORDANCE_TERMINAL_GUARD")
+        if record.whole_model_ranking == "corroborated_multisample" and not record.introns:
+            record.reasons.append("SINGLE_EXON_CONCORDANCE_TERMINAL_OR_SAMPLE_GTF_GUARD")
+        if record.ranking_protein_fit and (full or strong_chain):
+            record.reasons.extend((
+                "RNA_PROTEIN_CDS_CONCORDANCE",
+                "PROTEIN_FIT_RANK_ONLY_ADMISSION_UNCHANGED",
+                "DUAL_RANK_FULL_CDS_RNA_WITNESS" if full
+                else "DUAL_RANK_STRONG_CODING_CHAIN_WITNESS",
+            ))
+            if record.row["protein_multiplicity_status"] == "AMBIGUOUS_PROTEIN_MULTI_HIT":
+                record.reasons.append("MULTI_HIT_FIT_USED_FOR_RANK_ONLY")
+            if not record.introns and full:
+                record.reasons.append("SINGLE_EXON_RNA_PROTEIN_DUAL_RANK")
+                if record.ranking_multisample_rna:
+                    record.reasons.append("MULTIPLE_SAMPLE_GTFS_SUPPORT_FULL_CDS")
+        elif record.ranking_directional_protein_fit and full and strong_chain and record.strong_rna:
+            record.reasons.extend((
+                "RNA_PROTEIN_DIRECTIONAL_CONCORDANCE",
+                "PROTEIN_FIT_RANK_ONLY_ADMISSION_UNCHANGED",
+                "DUAL_RANK_FULL_CDS_RNA_AND_STRONG_CODING_CHAIN",
+                "CANDIDATE_PRECISION_RANK_ONLY_REFERENCE_RECALL_NOT_REQUIRED",
+            ))
+            if record.row["protein_multiplicity_status"] == "AMBIGUOUS_PROTEIN_MULTI_HIT":
+                record.reasons.append("MULTI_HIT_FIT_USED_FOR_RANK_ONLY")
+        return
+    if (
+        record.whole_model_ranking != "protein_first"
+        and record.strong_unique_full_protein and (full or strong_chain)
+        and _dual_evidence_rank(record)
+    ):
+        record.reasons.append(
+            "DUAL_RANK_FULL_CDS_RNA_WITNESS" if full else "DUAL_RANK_STRONG_CODING_CHAIN_WITNESS"
+        )
+        if not record.introns and full:
+            record.reasons.append("SINGLE_EXON_RNA_PROTEIN_DUAL_RANK")
+    elif (
+        record.whole_model_ranking == "coherent"
+        and record.strong_rna and record.strong_unique_full_protein
+    ):
+        record.reasons.append("RNA_PROTEIN_ADMISSION_WITHOUT_WHOLE_RNA_DUAL_RANK")
+
+
+def fusion_whole_model_support(record: Record) -> bool:
+    """Restrict automatic precedence, not the candidate's admission."""
+    if not record.whole_model_ranking:
+        return True
+    full, strong_chain = whole_model_rna_support(record)
+    return not record.rna_cds_conflict and (full or strong_chain)
+
+
 def evaluate_record(
     record: Record,
     policy: Mapping[str, Any],
     *,
     sample_count: int,
     replicates_per_condition: int,
+    additional_routes: Callable[[Record], Sequence[str]] | None = None,
 ) -> None:
+    record.whole_model_ranking = whole_model_ranking_mode(policy)
+    record.ranking_multisample_rna = multisample_rna_support_for_ranking(record, policy)
+    record.ranking_protein_fit = protein_fit_for_ranking(record, policy)
+    record.ranking_directional_protein_fit = directional_protein_fit_for_ranking(record, policy)
+    record.rna_cds_ranking = bool(policy.get("rna_cds_boundary_ranking", False))
+    record.rna_cds_competition = bool(policy.get("rna_cds_competition_ranking", False))
+    record.rna_cds_conflict = rna_cds_conflict_penalty(record.row, policy)
+    if record.whole_model_ranking:
+        whole_model_rna_support(record)
     if confirmed_only(policy):
         record.row["te_policy_id"] = policy["te_policy_id"]
     hard = policy["hard_qc"]
@@ -528,6 +765,8 @@ def evaluate_record(
             and (repeat_neutral(record) or record.repeat_risk == "LOW")
         ):
             record.routes.append("LONG_GENE_RNA_PROTEIN")
+    if additional_routes is not None:
+        record.routes.extend(additional_routes(record))
     if not record.routes:
         record.reasons.append("NO_INDEPENDENT_EVIDENCE_ROUTE")
         return
@@ -552,11 +791,18 @@ def evaluate_record(
     record.eligible = True
     record.decision = "ELIGIBLE_GRAPH"
     record.reasons.append("EVIDENCE_PASS" if repeat_neutral(record) else "EVIDENCE_AND_REPEAT_GATE_PASS")
+    if record.rna_cds_conflict:
+        record.reasons.append("RNA_CDS_CONFLICT_DOWNRANKED")
+    if record.rna_cds_competition and json.loads(record.row["rna_cds_countered_conflicts_json"]):
+        record.reasons.append("RNA_CDS_CONFLICT_COUNTERED_BY_OWN_RNA")
+    if record.rna_cds_ranking and record.row["rna_cds_status"] in {"SUPPORTED", "MIXED"}:
+        record.reasons.append("RNA_CDS_COMPLETE_STRUCTURE_SUPPORT")
+    add_whole_model_ranking_reasons(record)
 
 
 def _evidence_rank(record: Record) -> tuple[object, ...]:
     routes = set(record.routes)
-    both = {"STRONG_RECURRENT_RNA", "STRONG_UNIQUE_FULL_PROTEIN"} <= routes
+    both = _dual_evidence_rank(record)
     route_rank = (
         10 if record.fusion_center_precedence else
         9 if both else 8 if routes & {"STRONG_RECURRENT_RNA", "STRONG_UNIQUE_FULL_PROTEIN"}
@@ -567,7 +813,7 @@ def _evidence_rank(record: Record) -> tuple[object, ...]:
     protein_unique = record.row["protein_multiplicity_status"] in {
         "UNIQUE_PROTEIN_HIT", "UNIQUE_RETAINED_PROTEIN_HIT_SEED_MULTI_HIT_AUDIT"
     }
-    return (
+    rank = (
         -route_rank, -int(record.strong_rna), -int(record.strong_unique_full_protein),
         -int(record.predictor_exact), -_integer(record.row, "rna_tier"),
         -(_integer(record.row, "protein_tier") if protein_unique else 0),
@@ -576,6 +822,24 @@ def _evidence_rank(record: Record) -> tuple[object, ...]:
         0.0 if repeat_neutral(record) else _numeric(record.row, "repeat_cds_fraction"),
         -_integer(record.row, "translated_protein_aa"), record.key,
     )
+    if record.whole_model_ranking in {"minimal", "coherent", "protein_first"}:
+        rank = (rank[0], rank[2], rank[1], *rank[3:])
+    if record.rna_cds_ranking:
+        # Explicit contradictions rank below otherwise eligible alternatives.
+        # Preserve the established evidence-route hierarchy; a short complete
+        # RNA is not by itself stronger than a better RNA/protein evidence class.
+        complete = record.row["rna_cds_status"] in {"SUPPORTED", "MIXED"}
+        if record.rna_cds_competition:
+            # Evidence routes precede unresolved contradictions: absence of RNA
+            # is not a stronger evidence class. Keep positive isoform evidence
+            # and terminal conflicts separate, then use established tie-breaks.
+            # No candidate ID, protein length or locus exceptions.
+            return (
+                rank[0], int(record.rna_cds_conflict), -int(complete),
+                *rank[1:],
+            )
+        return (int(record.rna_cds_conflict), rank[0], -int(complete), *rank[1:])
+    return rank
 
 
 def _unique_isoform_proof(candidate: Record, anchors: Iterable[Record]) -> str | None:
@@ -742,8 +1006,11 @@ def evaluate_and_select(
                 and _numeric(record.row, "protein_chain_recall")
                 >= float(precedence.get("minimum_protein_chain_recall", 0.95))
             ):
-                record.fusion_center_precedence = True
-                record.reasons.append("FUSION_CENTER_STRICT_PRECEDENCE")
+                if fusion_whole_model_support(record):
+                    record.fusion_center_precedence = True
+                    record.reasons.append("FUSION_CENTER_STRICT_PRECEDENCE")
+                else:
+                    record.reasons.append("FUSION_PRECEDENCE_WITHHELD_WHOLE_RNA_OR_CONFLICT")
         selected: list[Record] = []
         for candidate in sorted(
             (
@@ -866,6 +1133,7 @@ def audit_row(record: Record, policy_id: str) -> dict[str, object]:
     introns = record.introns
     return {
         **{key: record.row.get(key, "") for key in TE_COLUMNS},
+        **{key: record.row.get(key, "NA") for key in RNA_CDS_COLUMNS + RNA_CDS_SAMPLE_COLUMNS},
         "candidate_id": record.key, "structure_id": record.row["structure_id"],
         "seqid": record.seqid, "strand": record.strand,
         "start": record.start, "end": record.end, "locus_id": record.locus_id,
@@ -890,6 +1158,11 @@ def audit_row(record: Record, policy_id: str) -> dict[str, object]:
         "balanced_base_selected": int(record.balanced_base_selected),
         "base_supplement": int(record.base_supplement),
         "eligible": int(record.eligible),
+        "rna_cds_conflict_penalty": int(record.rna_cds_conflict),
+        "rna_cds_complete_support": int(
+            record.rna_cds_ranking and record.row["rna_cds_status"] in {"SUPPORTED", "MIXED"}
+        ),
+        "selection_rank_json": json.dumps(_evidence_rank(record), separators=(",", ":")),
         "selected": int(record.selected), "active_fusion": int(record.active_fusion),
         "fusion_center_precedence": int(record.fusion_center_precedence),
         "routes": ",".join(record.routes) or "NA", "decision": record.decision,
