@@ -1,0 +1,13 @@
+name: geneinit-utr
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.11
+  - pip=26.2
+  - click>=8
+  - pillow>=10
+  - requests>=2.31
+  - pip:
+      - ingenannot==0.0.20

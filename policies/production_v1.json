@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "policy_id": "geneinit_production_v1_migration_pending",
+  "policy_version": 1,
+  "status": "MIGRATION_PENDING",
+  "selector_schema": "geneinit_selector_policy_v1",
+  "selector_core": {
+    "policy_id": "geneinit_v2_2h_classified_te_strong_rna_rescue_v1",
+    "hard_qc": {
+      "common_qc_pass": 1,
+      "min_protein_aa": 50,
+      "single_exon_min_protein_aa": 100
+    },
+    "rna": {
+      "min_recurrent_fraction": 0.8,
+      "max_nonrecurrent_introns": 1,
+      "strong_min_tier": 3,
+      "moderate_min_tier": 2,
+      "min_samples_recurrent": 2,
+      "min_replicates_strong": 2,
+      "long_gene_evidence_rescue": {
+        "enabled": true,
+        "min_introns": 20,
+        "min_recurrent_fraction": 0.8,
+        "min_protein_tier": 2,
+        "min_protein_chain_recall": 0.9,
+        "require_retained_unique_target": true,
+        "require_low_repeat": true
+      }
+    },
+    "protein": {
+      "moderate_min_tier": 2,
+      "strong_min_tier": 3,
+      "min_core_metric": 0.8,
+      "required_terminal_matches": 2,
+      "max_target_loci_per_expected_copy": 1.0,
+      "uniqueness_basis": "retained_only",
+      "allow_strong_unique_core_route": true
+    },
+    "predictor": {
+      "exact_min_tier": 3,
+      "require_both_predictors": true,
+      "allow_exact_moderate_unique_route": true
+    },
+    "repeat": {
+      "high_cds_fraction": 0.5,
+      "severe_cds_fraction": 0.8
+    },
+    "graph": {
+      "incompatible_relations": ["SAME_CHAIN", "HARD_OVERLAP"],
+      "alternative_splice": "require_unique_evidence",
+        "fusion_center_survival_any": [
+          "STRONG_SPANNING_JUNCTION",
+          "STRONG_UNIQUE_FULL_PROTEIN"
+        ],
+        "fusion_center_precedence": {
+          "minimum_intron_count": 2,
+          "minimum_protein_chain_recall": 0.95
+        },
+        "base_handling": "evidence_core_bound_base_supplement",
+        "base_alt_current_support": {
+          "min_recurrent_fraction": 0.8,
+          "max_nonrecurrent_introns": 2,
+          "relative_rna_min_unique_junctions_per_core_alt": 1,
+          "long_gene_min_introns": 10,
+          "long_gene_min_protein_cds_f1": 0.85,
+          "long_gene_required_terminal_matches": 2,
+          "long_gene_require_unique_target_linked": true
+        }
+      }
+  },
+  "postqc_schema": "geneinit_postqc_policy_v1",
+  "postqc": {
+    "minimum_same_frame_overlap_bp": 3,
+    "bridge_recovery": {
+      "minimum_rna_tier": 2,
+      "minimum_protein_tier": 2,
+      "maximum_repeat_cds_fraction": 0.8,
+      "exclude_active_fusion": true
+    },
+    "rna_bridge_reconstruction": {
+      "minimum_hq_reads": 3,
+      "minimum_replicated_conditions": 1,
+      "maximum_intron_bp": 5000,
+      "require_exact_exon_and_cds_boundaries": true,
+      "require_complete_orf": true
+    },
+    "unsupported_connector": {
+      "minimum_protected_neighbor_components": 2,
+      "external_support_basis": "rna_or_protein_tier_ge2_or_selector_route"
+    },
+    "maximum_iterations": 5
+  },
+  "note": "This placeholder cannot authorize a structural release until the v2.2H migration matrix and policy regression are complete."
+}

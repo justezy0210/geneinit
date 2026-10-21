@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geneinit"
+version = "0.0.0.dev0"
+description = "Evidence-integrated eukaryotic structural gene annotation workflow"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+geneinit-run = "geneinit.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["geneinit*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

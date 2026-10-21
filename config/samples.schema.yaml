@@ -1,0 +1,28 @@
+schema_version: 1
+format: tsv
+required_columns:
+  - sample
+  - condition
+  - replicate
+  - layout
+  - strandedness
+  - read1
+  - read2
+contracts:
+  sample: "Unique [A-Za-z0-9_.-]+ identifier."
+  condition: "Non-empty biological condition label."
+  replicate: "Non-empty replicate label, unique within a condition."
+  layout:
+    PE: "read1 and read2 are both required."
+    SE: "read1 is required and read2 must be empty."
+  strandedness:
+    PE: [RF, FR, unstranded]
+    SE: [R, F, unstranded]
+tool_mapping:
+  PE_RF: {hisat2: RF, stringtie: "--rf"}
+  PE_FR: {hisat2: FR, stringtie: "--fr"}
+  PE_unstranded: {hisat2: null, stringtie: null}
+  SE_R: {hisat2: R, stringtie: "--rf"}
+  SE_F: {hisat2: F, stringtie: "--fr"}
+  SE_unstranded: {hisat2: null, stringtie: null}
+

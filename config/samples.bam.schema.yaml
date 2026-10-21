@@ -1,0 +1,15 @@
+schema_version: 1
+format: tsv
+input_mode: bam
+required_columns: [sample, condition, replicate, layout, strandedness, bam, csi]
+contracts:
+  sample: "Unique [A-Za-z0-9_.-]+ identifier."
+  condition: "Non-empty biological condition label."
+  replicate: "Non-empty replicate label, unique within a condition."
+  bam: "Unique readable coordinate-sorted RNA BAM matching the reference dictionary."
+  csi: "Readable CSI index for this BAM; BAI is not accepted."
+  layout: [PE, SE]
+  strandedness:
+    PE: [RF, FR, unstranded]
+    SE: [R, F, unstranded]
+reference_contract: "rna.reference_fasta is required and must match genome ignoring case and FASTA formatting."

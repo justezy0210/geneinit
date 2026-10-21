@@ -1,0 +1,15 @@
+name: geneinit-utr
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.11
+  - pip=26.2
+  # Explicit because pip may otherwise mistake server user-site copies for
+  # dependencies installed inside this environment.
+  - click>=8
+  - pillow>=10
+  - requests>=2.31
+  - pip:
+      - ingenannot==0.0.20

@@ -1,0 +1,8 @@
+name: geneinit-fastp
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - fastp=1.1.0
+

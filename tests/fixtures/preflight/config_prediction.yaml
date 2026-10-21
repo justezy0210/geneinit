@@ -1,0 +1,23 @@
+assembly_id: TEST1
+organism: "Testus fungalis"
+assembly_scope: nuclear
+reference_representation: haploid
+expected_protein_copies: 1
+genetic_code: 1
+gene_prefix: TEST1G
+genome: tests/fixtures/preflight/genome.fa
+repeat_gff: tests/fixtures/preflight/repeats.gff3
+protein_fasta: tests/fixtures/preflight/proteins.faa
+samples: tests/fixtures/preflight/samples.tsv
+policy: policies/production_v2.json
+execution_id: fixture_prediction
+execution_root: tests/fixtures/preflight/output
+deployment:
+  predictor_sif: tests/fixtures/preflight/dummy_predictor.image
+  predictor_sif_sha256: 8e4749df064d6f5eb5c68b7b74aadcd2426114de7ced8fc76a7e1ab48edeac9b
+  genemark_license_acknowledged: true
+  apptainer_executable: apptainer
+prediction:
+  genemark_proc: protein_evidence
+  augustus_species: TEST1_etp
+  augustus_rounds: 5

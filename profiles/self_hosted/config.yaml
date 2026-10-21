@@ -1,0 +1,8 @@
+cores: 8
+latency-wait: 60
+printshellcmds: true
+rerun-incomplete: true
+keep-going: false
+software-deployment-method:
+  - conda
+  - apptainer

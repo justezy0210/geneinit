@@ -1,0 +1,62 @@
+assembly_id: ASM1
+organism: "Genus species"
+assembly_scope: nuclear
+reference_representation: haploid
+expected_protein_copies: 1
+genetic_code: 1
+gene_prefix: ASM1G
+genome: /ABSOLUTE/PATH/ASM1.softmasked.fa
+repeat_gff: /ABSOLUTE/PATH/ASM1.repeats.gff3
+protein_fasta: /ABSOLUTE/PATH/reference_proteins.faa
+samples: /ABSOLUTE/PATH/samples.tsv
+# Optional alternative: samples must then use config/samples.bam.schema.yaml.
+# rna:
+#   input_mode: bam
+#   reference_fasta: /ABSOLUTE/PATH/reference_used_for_alignment.fa
+policy: policies/production_v2.json
+# Optional completed direct-domain, host and intact-TE evidence bundle.
+# te_evidence: /ABSOLUTE/PATH/ASM1.te_evidence.json
+
+# Runtime-only values. These do not participate in biological model identity.
+execution_id: ASM1_development_r1
+execution_root: runs
+
+# Required by the `prediction` target. The licensed image is never bundled.
+deployment:
+  # Use in_container with the all-in-one image and profiles/allinone.
+  mode: apptainer
+  predictor_sif: /ABSOLUTE/PATH/genemark_etp_augustus.sif
+  predictor_sif_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+  genemark_license_acknowledged: true
+  apptainer_executable: apptainer
+
+# Taxon-neutral direct GeneMark-ETP + AUGUSTUS predictor settings.
+prediction:
+  # Reuse trained AUGUSTUS for evidence-guided local unmasking before selection.
+  masking_rescue: true
+  genemark_proc: protein_evidence
+  augustus_species: ASM1_etp
+  # Validated manifest for reusing trained parameters and a completed reference prefix.
+  # augustus_prediction_resume: /absolute/path/prediction_resume.json
+  augustus_rounds: 5
+  augustus_kfold: 8
+  # Optional: continue optimization from a compatible best parameter file.
+  # It must belong to the same species, selected data and AUGUSTUS version.
+  # augustus_optimization_start_parameters: /path/to/best_parameters.cfg
+  augustus_training_flank: 1000
+  # Optional: preserve a reviewed selection when restarting from an existing
+  # GenBank conversion. Both files must describe this genome/training input.
+  # augustus_training_snapshot:
+  #   genbank: /path/to/reviewed/training.raw.gb
+  #   selection: /path/to/reviewed/selection.tsv
+  augustus_training:
+    max_loci: 6000
+    optimize_loci: 500
+    holdout_loci: 500
+    seed: 17
+    identity: 80
+    coverage: 80
+
+evidence:
+  junction_min_mapq: 10
+  junction_min_anchor: 8

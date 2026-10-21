@@ -1,0 +1,15 @@
+name: geneinit-bootstrap
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.12
+  - snakemake-minimal=9.23.1
+  - conda-lock
+  - jsonschema
+  - pyyaml
+  - pytest
+  - pysam=0.23.3
+  - mkdocs=1.6.1
+

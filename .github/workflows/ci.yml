@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-file: envs/locks/linux-64/bootstrap.conda-lock.yml
+          environment-name: geneinit-ci
+          micromamba-version: 2.8.1-0
+          cache-environment: true
+          cache-downloads: true
+      - name: Unit tests
+        shell: micromamba-shell {0}
+        run: python -m pytest tests/unit -v
+      - name: Snakemake lint
+        shell: micromamba-shell {0}
+        run: >-
+          snakemake --lint
+          --runtime-source-cache-path "${RUNNER_TEMP}/geneinit-lint-cache"
+          --configfile tests/fixtures/preflight/config_prediction.yaml
+      - name: Fixture dry-run
+        shell: micromamba-shell {0}
+        run: >-
+          snakemake rna_evidence --dry-run --cores 8
+          --runtime-source-cache-path "${RUNNER_TEMP}/geneinit-dryrun-cache"
+          --configfile tests/fixtures/preflight/config.yaml
+      - name: Single-end fixture dry-run
+        shell: micromamba-shell {0}
+        run: >-
+          snakemake rna_evidence --dry-run --cores 8
+          --runtime-source-cache-path "${RUNNER_TEMP}/geneinit-se-dryrun-cache"
+          --configfile tests/fixtures/preflight/config_se.yaml
+      - name: Predictor DAG dry-run
+        shell: micromamba-shell {0}
+        run: >-
+          snakemake prediction --dry-run --cores 36
+          --runtime-source-cache-path "${RUNNER_TEMP}/geneinit-prediction-dryrun-cache"
+          --configfile tests/fixtures/preflight/config_prediction.yaml
+      - name: Structural annotation through release staging dry-run
+        shell: micromamba-shell {0}
+        run: >-
+          snakemake structural_release --dry-run --cores 36
+          --runtime-source-cache-path "${RUNNER_TEMP}/geneinit-release-dryrun-cache"
+          --configfile tests/fixtures/preflight/config_prediction.yaml
+      - name: Fixture integration
+        shell: micromamba-shell {0}
+        run: >-
+          snakemake preflight --cores 1
+          --runtime-source-cache-path "${RUNNER_TEMP}/geneinit-run-cache"
+          --configfile tests/fixtures/preflight/config.yaml
+      - name: Documentation build
+        shell: micromamba-shell {0}
+        run: mkdocs build --strict --site-dir "${RUNNER_TEMP}/geneinit-site"

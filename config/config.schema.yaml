@@ -1,0 +1,181 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: GeneInIt production configuration
+type: object
+additionalProperties: false
+required:
+  - assembly_id
+  - organism
+  - assembly_scope
+  - reference_representation
+  - expected_protein_copies
+  - genetic_code
+  - gene_prefix
+  - genome
+  - repeat_gff
+  - protein_fasta
+  - samples
+  - policy
+properties:
+  assembly_id:
+    type: string
+    pattern: "^[A-Za-z0-9_.-]+$"
+  organism:
+    type: string
+    minLength: 1
+  assembly_scope:
+    const: nuclear
+  reference_representation:
+    enum:
+      - haploid
+      - primary_haploidized
+      - phased_diploid
+      - unphased_diploid
+      - polyploid
+  expected_protein_copies:
+    type: integer
+    minimum: 1
+  genetic_code:
+    const: 1
+  gene_prefix:
+    type: string
+    pattern: "^[A-Za-z][A-Za-z0-9_]{0,19}$"
+  genome:
+    type: string
+    minLength: 1
+  repeat_gff:
+    type: string
+    minLength: 1
+  protein_fasta:
+    type: string
+    minLength: 1
+  samples:
+    type: string
+    minLength: 1
+  te_evidence:
+    type: string
+    minLength: 1
+    description: Versioned geneinit_te_evidence_v2 JSON; omission means NOT_ASSESSED.
+  policy:
+    type: string
+    minLength: 1
+  execution_id:
+    type: string
+    pattern: "^[A-Za-z0-9_.-]+$"
+  execution_root:
+    type: string
+    minLength: 1
+  rna:
+    type: object
+    additionalProperties: false
+    properties:
+      input_mode:
+        enum: [fastq, bam]
+      reference_fasta:
+        type: string
+        minLength: 1
+    if:
+      required: [input_mode]
+      properties:
+        input_mode:
+          const: bam
+    then:
+      required: [reference_fasta]
+    else:
+      not:
+        required: [reference_fasta]
+  deployment:
+    type: object
+    additionalProperties: false
+    required:
+      - predictor_sif
+      - predictor_sif_sha256
+      - genemark_license_acknowledged
+    properties:
+      mode:
+        enum:
+          - apptainer
+          - in_container
+      predictor_sif:
+        type: string
+        minLength: 1
+      predictor_sif_sha256:
+        type: string
+        pattern: "^[0-9a-fA-F]{64}$"
+      genemark_license_acknowledged:
+        const: true
+      apptainer_executable:
+        type: string
+        minLength: 1
+  prediction:
+    type: object
+    additionalProperties: false
+    required:
+      - genemark_proc
+    properties:
+      genemark_proc:
+        type: string
+        pattern: "^[A-Za-z0-9_.-]+$"
+      augustus_species:
+        type: string
+        pattern: "^[A-Za-z0-9_.-]+$"
+      masking_rescue:
+        type: boolean
+      augustus_prediction_resume:
+        type: string
+        minLength: 1
+      augustus_rounds:
+        type: integer
+        minimum: 1
+      augustus_kfold:
+        type: integer
+        minimum: 2
+      augustus_optimization_start_parameters:
+        type: string
+        minLength: 1
+      augustus_training_flank:
+        type: integer
+        minimum: 0
+      augustus_training_snapshot:
+        type: object
+        additionalProperties: false
+        required: [genbank, selection]
+        properties:
+          genbank:
+            type: string
+            minLength: 1
+          selection:
+            type: string
+            minLength: 1
+      augustus_training:
+        type: object
+        additionalProperties: false
+        properties:
+          max_loci:
+            type: integer
+            minimum: 3
+          optimize_loci:
+            type: integer
+            minimum: 1
+          holdout_loci:
+            type: integer
+            minimum: 1
+          seed:
+            type: integer
+          identity:
+            type: number
+            exclusiveMinimum: 0
+            maximum: 100
+          coverage:
+            type: number
+            exclusiveMinimum: 0
+            maximum: 100
+  evidence:
+    type: object
+    additionalProperties: false
+    properties:
+      junction_min_mapq:
+        type: integer
+        minimum: 0
+      junction_min_anchor:
+        type: integer
+        minimum: 1

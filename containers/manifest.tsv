@@ -1,0 +1,2 @@
+component	image_type	image_reference	expected_sha256	status
+genemark_etp_augustus	local_sif	config:deployment.predictor_sif	config:deployment.predictor_sif_sha256	EXTERNAL_LICENSED_IMAGE_REQUIRED

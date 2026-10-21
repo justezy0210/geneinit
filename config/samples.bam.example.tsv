@@ -1,0 +1,2 @@
+sample	condition	replicate	layout	strandedness	bam	csi
+S1	control	1	PE	RF	/ABSOLUTE/PATH/S1.sorted.bam	/ABSOLUTE/PATH/S1.sorted.bam.csi

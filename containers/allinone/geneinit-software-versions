@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cat /etc/os-release
+printf 'snakemake\t'
+snakemake --version
+fastp --version
+# Read the complete output so pipefail cannot turn a closed pipe into a failure.
+hisat2 --version | sed -n '1p'
+samtools --version | sed -n '1p'
+printf 'stringtie\t'
+stringtie --version
+printf 'pysam\t'
+python -c 'import pysam; print(pysam.__version__)'
+printf 'pyyaml\t'
+python -c 'import yaml; print(yaml.__version__)'
+printf 'ingenannot\t'
+/opt/geneinit-utr/bin/python -c 'from importlib.metadata import version; print(version("ingenannot"))'
+/opt/Augustus/bin/augustus --version 2>&1
+grep -m1 'my .version' /opt/ETP/bin/gmetp.pl

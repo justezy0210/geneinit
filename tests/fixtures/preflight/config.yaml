@@ -1,0 +1,14 @@
+assembly_id: TEST1
+organism: "Testus fungalis"
+assembly_scope: nuclear
+reference_representation: haploid
+expected_protein_copies: 1
+genetic_code: 1
+gene_prefix: TEST1G
+genome: tests/fixtures/preflight/genome.fa
+repeat_gff: tests/fixtures/preflight/repeats.gff3
+protein_fasta: tests/fixtures/preflight/proteins.faa
+samples: tests/fixtures/preflight/samples.tsv
+policy: policies/production_v2.json
+execution_id: fixture
+execution_root: tests/fixtures/preflight/output

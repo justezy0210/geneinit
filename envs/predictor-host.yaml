@@ -1,0 +1,9 @@
+name: geneinit-predictor-host
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.12
+  - pyyaml=6.0.3
+  - samtools=1.24

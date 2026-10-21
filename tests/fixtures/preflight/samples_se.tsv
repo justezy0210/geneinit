@@ -1,0 +1,2 @@
+sample	condition	replicate	layout	strandedness	read1	read2
+S2	control	1	SE	R	tests/fixtures/preflight/sample_R1.fastq	
