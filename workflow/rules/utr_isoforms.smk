@@ -27,7 +27,7 @@ rule prepare_postqc_utr_shards:
         tasks=UTR_TASKS,
         complete=UTR_PREP_COMPLETE,
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
         seqids=REFERENCE_SEQUENCE_IDS,
         shards=UTR_SHARDS,
     log:
@@ -78,7 +78,7 @@ rule refine_utr_shard:
         mapping=f"{UTR_DIR}/02_refined/{{shard}}/normalized.mapping.tsv",
         summary=f"{UTR_DIR}/02_refined/{{shard}}/normalized.summary.tsv",
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
     wildcard_constraints:
         shard="|".join(UTR_SHARDS),
     log:
@@ -102,7 +102,7 @@ rule aggregate_utr_shards:
         summary=f"{UTR_DIR}/{ASSEMBLY_ID}.utr_models.summary.tsv",
         complete=UTR_COMPLETE,
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
     log:
         f"{EXECUTION_ROOT}/{EXECUTION_ID}/logs/final_utr/aggregate.log",
     conda:

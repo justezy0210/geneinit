@@ -19,7 +19,7 @@ rule extract_sample_junctions:
         layout="PE|SE",
         sample="|".join(map(re.escape, SAMPLES)),
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
         sample=lambda wildcards: _sample_record(wildcards).sample,
         condition=lambda wildcards: _sample_record(wildcards).condition,
         layout=lambda wildcards: _sample_record(wildcards).layout,
@@ -47,7 +47,7 @@ rule aggregate_junctions:
         summary=f"{JUNCTION_DIR}/aggregate/{ASSEMBLY_ID}.hq_junctions.summary.tsv",
         complete=JUNCTION_COMPLETE,
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
         assembly_id=ASSEMBLY_ID,
         samples=SAMPLES,
         conditions=[SAMPLE_BY_ID[sample].condition for sample in SAMPLES],
@@ -91,7 +91,7 @@ rule score_component_evidence:
         summary=f"{COMPONENT_DIR}/{ASSEMBLY_ID}.component_evidence.summary.tsv",
         complete=COMPONENT_COMPLETE,
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
         assembly_id=ASSEMBLY_ID,
         expected_protein_copies=int(config["expected_protein_copies"]),
         repeat_scope="classified_te_v1",

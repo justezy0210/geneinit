@@ -15,7 +15,7 @@ rule build_candidate_universe:
         summary=f"{CANDIDATE_DIR}/{ASSEMBLY_ID}.candidate_universe.summary.tsv",
         complete=CANDIDATE_COMPLETE,
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
         assembly_id=ASSEMBLY_ID,
     log:
         f"{EXECUTION_ROOT}/{EXECUTION_ID}/logs/models/candidate_universe.log",

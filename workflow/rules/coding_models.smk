@@ -10,7 +10,7 @@ rule prepare_selected_coding_models:
         summary=f"{CODING_DIR}/{ASSEMBLY_ID}.selected_coding.summary.tsv",
         complete=CODING_COMPLETE,
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
         seqids=REFERENCE_SEQUENCE_IDS,
     log:
         f"{EXECUTION_ROOT}/{EXECUTION_ID}/logs/coding/prepare.log",
@@ -36,7 +36,7 @@ rule group_coding_models:
         summary=f"{GROUPING_DIR}/{ASSEMBLY_ID}.provisional_genes.summary.tsv",
         complete=GROUPING_COMPLETE,
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
         seqids=REFERENCE_SEQUENCE_IDS,
     log:
         f"{EXECUTION_ROOT}/{EXECUTION_ID}/logs/coding/grouping.log",

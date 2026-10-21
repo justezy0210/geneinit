@@ -39,7 +39,7 @@ rule run_structural_postqc:
         unified_selection=str(Path(POSTQC_GFF3).with_suffix(".unified_selection.tsv")),
         unified_rounds=str(Path(POSTQC_GFF3).with_suffix(".unified_rounds.tsv")),
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
         assembly_id=ASSEMBLY_ID,
         seqids=REFERENCE_SEQUENCE_IDS,
         sample_count=len(SAMPLES),

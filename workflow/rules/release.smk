@@ -38,7 +38,7 @@ rule build_structural_release:
         policy=f"{RELEASE_STAGING_DIR}/policy.json",
         complete=RELEASE_COMPLETE,
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
         seqids=REFERENCE_SEQUENCE_IDS,
         assembly_id=ASSEMBLY_ID,
         gene_prefix=str(config["gene_prefix"]),

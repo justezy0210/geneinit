@@ -164,7 +164,7 @@ else:
             csi=f"{ALIGNMENT_DIR}/{{layout}}/{{sample}}/{ASSEMBLY_ID}.{{sample}}.sorted.bam.csi",
             audit=f"{ALIGNMENT_DIR}/{{layout}}/{{sample}}/{ASSEMBLY_ID}.{{sample}}.sorted.bam.import.json",
         params:
-            repo_root=str(workflow.basedir),
+            repo_root=lambda wildcards: str(workflow.basedir),
         log:
             f"{EXECUTION_ROOT}/{EXECUTION_ID}/logs/rna_import/{{layout}}/{{sample}}.log",
         conda:

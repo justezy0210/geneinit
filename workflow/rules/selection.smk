@@ -18,7 +18,7 @@ rule select_coding_models:
         summary=f"{SELECTION_DIR}/{ASSEMBLY_ID}.selection.summary.tsv",
         complete=SELECTION_COMPLETE,
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
         assembly_id=ASSEMBLY_ID,
         sample_count=len(SAMPLES),
         evidence_gate_version="confirmed_te_only_v2",

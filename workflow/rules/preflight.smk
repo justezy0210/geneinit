@@ -23,7 +23,7 @@ rule preflight:
         summary=f"{PREFLIGHT_DIR}/preflight.json",
         complete=PREFLIGHT_COMPLETE,
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
         config_snapshot=lambda wildcards: json.dumps(config, sort_keys=True),
         input_only=False,
     log:
@@ -49,7 +49,7 @@ rule input_preflight:
         input_manifest=f"{INPUT_PREFLIGHT_DIR}/input_manifest.tsv",
         complete=INPUT_PREFLIGHT_COMPLETE,
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
         config_snapshot=lambda wildcards: json.dumps(input_preflight_config(config), sort_keys=True),
         input_only=True,
     log:

@@ -7,7 +7,7 @@ rule predictor_container_preflight:
         versions=f"{PREDICTION_DIR}/00_container/software_versions.txt",
         complete=PREDICTOR_PREFLIGHT,
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
         deployment_snapshot=lambda wildcards: json.dumps(config.get("deployment", {}), sort_keys=True),
     log:
         f"{EXECUTION_ROOT}/{EXECUTION_ID}/logs/prediction/container_preflight.log",
@@ -42,7 +42,7 @@ rule genemark_etp:
         model=f"{GENEMARK_RESULT}/initial_genemark_model.mod",
         complete=GENEMARK_COMPLETE,
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
         samples=SAMPLES,
         assembly_id=ASSEMBLY_ID,
         species=ASSEMBLY_ID,
@@ -67,7 +67,7 @@ rule build_full_etp_hints:
         hints=ETP_HINTS,
         complete=ETP_HINTS_COMPLETE,
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
         proc=GENEMARK_PROC,
     log:
         f"{EXECUTION_ROOT}/{EXECUTION_ID}/logs/prediction/etp_hints.log",
@@ -85,7 +85,7 @@ rule prepare_augustus_config:
         config=directory(AUGUSTUS_CONFIG),
         complete=f"{PREDICTION_DIR}/03_augustus/config.complete.tsv",
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
     log:
         f"{EXECUTION_ROOT}/{EXECUTION_ID}/logs/prediction/augustus_config.log",
     conda:
@@ -144,7 +144,7 @@ rule prediction:
     output:
         complete=PREDICTION_COMPLETE,
     params:
-        repo_root=str(workflow.basedir),
+        repo_root=lambda wildcards: str(workflow.basedir),
         assembly_id=ASSEMBLY_ID,
     log:
         f"{EXECUTION_ROOT}/{EXECUTION_ID}/logs/prediction/complete.log",
